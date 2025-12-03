@@ -3,9 +3,9 @@ package swagger
 import (
 	"fmt"
 	"net/http"
-	
-	"github.com/go-lynx/lynx/log"
+
 	"github.com/go-lynx/lynx-swagger/ui"
+	"github.com/go-lynx/lynx/log"
 )
 
 // SwaggerUIServer Swagger UI server
@@ -30,26 +30,26 @@ func NewSwaggerUIServer(port int, path, specURL, title string) *SwaggerUIServer 
 // Start starts the UI server
 func (s *SwaggerUIServer) Start() error {
 	mux := http.NewServeMux()
-	
+
 	// Register Swagger UI route
 	mux.HandleFunc(s.path, s.serveSwaggerUI)
-	
+
 	// Register Swagger JSON route
 	mux.HandleFunc(s.path+".json", s.serveSwaggerJSON)
-	
+
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
 		Handler: mux,
 	}
-	
+
 	log.Infof("Starting Swagger UI server on http://localhost:%d%s", s.port, s.path)
-	
+
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Errorf("Swagger UI server error: %v", err)
 		}
 	}()
-	
+
 	return nil
 }
 

@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	
+
 	"github.com/go-kratos/kratos/v2/config"
 	"github.com/go-kratos/kratos/v2/log"
-	"github.com/go-lynx/lynx/plugins"
 	"github.com/go-lynx/lynx-swagger"
+	"github.com/go-lynx/lynx/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -152,10 +152,10 @@ func (m *MockConfig) Value(key string) config.Value {
 	return &MockValue{data: m.data}
 }
 
-func (m *MockConfig) Load() error { return nil }
+func (m *MockConfig) Load() error                               { return nil }
 func (m *MockConfig) Watch(key string, o config.Observer) error { return nil }
-func (m *MockConfig) Close() error { return nil }
-func (m *MockConfig) Scan(dest interface{}) error { return nil }
+func (m *MockConfig) Close() error                              { return nil }
+func (m *MockConfig) Scan(dest interface{}) error               { return nil }
 
 // MockValue mock value
 type MockValue struct {
@@ -167,22 +167,22 @@ func (m *MockValue) Scan(dest interface{}) error {
 	return nil
 }
 
-func (m *MockValue) Bool() (bool, error) { return false, nil }
-func (m *MockValue) Int() (int64, error) { return 0, nil }
-func (m *MockValue) Float() (float64, error) { return 0.0, nil }
-func (m *MockValue) String() (string, error) { return "", nil }
-func (m *MockValue) Duration() (time.Duration, error) { return 0, nil }
-func (m *MockValue) Slice() ([]config.Value, error) { return nil, nil }
+func (m *MockValue) Bool() (bool, error)                   { return false, nil }
+func (m *MockValue) Int() (int64, error)                   { return 0, nil }
+func (m *MockValue) Float() (float64, error)               { return 0.0, nil }
+func (m *MockValue) String() (string, error)               { return "", nil }
+func (m *MockValue) Duration() (time.Duration, error)      { return 0, nil }
+func (m *MockValue) Slice() ([]config.Value, error)        { return nil, nil }
 func (m *MockValue) Map() (map[string]config.Value, error) { return nil, nil }
-func (m *MockValue) Load() any { return m.data }
-func (m *MockValue) Store(any) {}
+func (m *MockValue) Load() any                             { return m.data }
+func (m *MockValue) Store(any)                             {}
 
 func TestSwaggerPluginIntegration(t *testing.T) {
 	// Create temporary directory
 	tempDir, err := os.MkdirTemp("", "swagger-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
-	
+
 	// Create test file
 	testFile := filepath.Join(tempDir, "test.go")
 	testCode := `package test
@@ -209,20 +209,20 @@ type User struct {
 `
 	err = os.WriteFile(testFile, []byte(testCode), 0644)
 	require.NoError(t, err)
-	
+
 	// Create plugin
 	plugin := swagger.NewSwaggerPlugin()
 	assert.NotNil(t, plugin)
-	
+
 	// Mock runtime configuration
 	runtime := &MockRuntime{
 		config: map[string]interface{}{
 			"lynx.swagger": map[string]interface{}{
 				"enabled": true,
 				"gen": map[string]interface{}{
-					"enabled":      true,
-					"scan_dirs":    []string{tempDir},
-					"output_path":  filepath.Join(tempDir, "swagger.json"),
+					"enabled":     true,
+					"scan_dirs":   []string{tempDir},
+					"output_path": filepath.Join(tempDir, "swagger.json"),
 				},
 				"ui": map[string]interface{}{
 					"enabled": false, // Don't start UI during testing
@@ -230,14 +230,14 @@ type User struct {
 			},
 		},
 	}
-	
+
 	// Initialize resources
 	err = plugin.InitializeResources(runtime)
 	assert.NoError(t, err)
-	
+
 	// Wait for document generation
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Check generated file
 	swaggerFile := filepath.Join(tempDir, "swagger.json")
 	if _, statErr := os.Stat(swaggerFile); statErr == nil {
@@ -247,7 +247,7 @@ type User struct {
 		assert.Contains(t, string(data), "swagger")
 		assert.Contains(t, string(data), "2.0")
 	}
-	
+
 	// Clean up tasks
 	err = plugin.CleanupTasks()
 	assert.NoError(t, err)
@@ -255,7 +255,7 @@ type User struct {
 
 func TestSwaggerAnnotationParsing(t *testing.T) {
 	parser := &swagger.AnnotationParser{}
-	
+
 	testCases := []struct {
 		name     string
 		line     string
@@ -291,12 +291,12 @@ func TestSwaggerAnnotationParsing(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			param := parser.ParseParam(tc.line)
 			assert.NotNil(t, param)
-			
+
 			expected := tc.expected.(map[string]interface{})
 			if name, ok := expected["name"]; ok {
 				assert.Equal(t, name, param.Name)
@@ -316,7 +316,7 @@ func TestSwaggerAnnotationParsing(t *testing.T) {
 
 func TestSwaggerResponseParsing(t *testing.T) {
 	parser := &swagger.AnnotationParser{}
-	
+
 	testCases := []struct {
 		name         string
 		line         string
@@ -342,7 +342,7 @@ func TestSwaggerResponseParsing(t *testing.T) {
 			expectedDesc: "Deleted successfully",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			code, resp := parser.ParseResponse(tc.line)
