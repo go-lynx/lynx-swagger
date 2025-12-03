@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	
-	"github.com/go-lynx/lynx/app/log"
-	"github.com/go-lynx/lynx/plugins/swagger/ui"
+	"github.com/go-lynx/lynx/log"
+	"github.com/go-lynx/lynx-swagger/ui"
 )
 
 // SwaggerUIServer Swagger UI server

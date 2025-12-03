@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-lynx/lynx/app/log"
+	"github.com/go-lynx/lynx/log"
 	"github.com/go-openapi/spec"
 )
 

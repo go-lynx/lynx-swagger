@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	_ "github.com/go-lynx/lynx/plugins/swagger" // Import swagger plugin
+	_ "github.com/go-lynx/lynx-swagger" // Import swagger plugin
 )
 
 // @title Example API

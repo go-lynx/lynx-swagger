@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 	
-	"github.com/go-lynx/lynx/plugins/swagger"
+	"github.com/go-lynx/lynx-swagger"
 	"github.com/go-openapi/spec"
 	"github.com/stretchr/testify/assert"
 )

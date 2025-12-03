@@ -1,4 +1,4 @@
-module github.com/go-lynx/lynx/plugins/swagger
+module github.com/go-lynx/lynx-swagger
 
 go 1.25
 
@@ -44,4 +44,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/go-lynx/lynx => ../../../lynx
+replace github.com/go-lynx/lynx => ../lynx
