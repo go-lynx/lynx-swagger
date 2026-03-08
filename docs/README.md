@@ -1,26 +1,23 @@
-# Swagger Documentation Directory
+# Swagger / OpenAPI Documentation Directory
 
-This directory is used to store generated Swagger API documentation.
+This directory can store the **merged** API documentation (from `make api` + lynx-swagger annotation scan).
 
-## File Description
+## File names
 
-- `swagger.json` - Auto-generated Swagger 2.0 specification document (JSON format)
-- `swagger.yaml` - Auto-generated Swagger 2.0 specification document (YAML format)
+- `openapi.yaml` – recommended single file: from `make api` (protoc-gen-openapi) and overwritten by lynx-swagger with merged content (proto + annotations).
+- `openapi.json` – same content in JSON form if you set `output_path` to a `.json` path.
 
-## Generation Method
+## How it is generated
 
-Documentation is automatically generated in the following cases:
-1. When scanning code annotations during application startup
-2. When files change (if monitoring is enabled)
-3. When manually calling the generation interface
+1. **make api** (in lynx-layout): writes OpenAPI to `docs/` (e.g. `docs/openapi.yaml`).
+2. **lynx-swagger** at runtime: loads that file (`spec_files`), merges annotation scan, and writes back to the same path (`output_path`) so you have one merged file.
 
 ## Configuration
-
-Configure output path in `config.yaml`:
 
 ```yaml
 lynx:
   swagger:
-    gen:
-      output_path: "./plugins/swagger/docs/swagger.json"
+    generator:
+      spec_files: ["./docs/openapi.yaml"]
+      output_path: "./docs/openapi.yaml"
 ```

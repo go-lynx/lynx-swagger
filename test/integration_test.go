@@ -219,7 +219,7 @@ type User struct {
 		config: map[string]interface{}{
 			"lynx.swagger": map[string]interface{}{
 				"enabled": true,
-				"gen": map[string]interface{}{
+				"generator": map[string]interface{}{
 					"enabled":     true,
 					"scan_dirs":   []string{tempDir},
 					"output_path": filepath.Join(tempDir, "swagger.json"),

@@ -33,7 +33,7 @@ lynx:
       require_auth: false
     
     # Documentation generation configuration
-    gen:
+    generator:
       enabled: true
       
       # Scan directories - RESTRICTED TO SAFE PATHS
@@ -135,7 +135,7 @@ lynx:
 #       enabled: true
 #       port: 8081
 #       path: "/swagger"
-#     gen:
+#     generator:
 #       enabled: true
 #       scan_dirs: ["./app"]
 #       output_path: "./docs/swagger.json"

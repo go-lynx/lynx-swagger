@@ -5,19 +5,26 @@ lynx:
     enabled: true
     
     # Documentation generation
-    gen:
+    generator:
       enabled: true
+      # spec_files: ["./openapi.yaml"]  # optional: load external OAS2/OAS3 files (e.g. from protoc-gen-openapi)
       scan_dirs:
         - "./"
-      output_path: "./docs/swagger.json"
+      output_path: "./docs/openapi.yaml"
       watch_enabled: true
     
-    # UI service
+    # UI service (port for Swagger UI page; API requests go to lynx-http)
     ui:
       enabled: true
       port: 8080
       path: "/swagger"
       title: "API Documentation"
+    
+    # API server for Swagger UI "Try it out" (lynx-http address)
+    # If not set, reads from lynx.http.addr automatically
+    api_server:
+      host: "localhost:8080"   # lynx-http listen address
+      base_path: ""            # optional, e.g. "/api/v1"
     
     # API information
     info:

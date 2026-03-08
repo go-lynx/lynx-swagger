@@ -67,10 +67,10 @@ lynx:
       enabled: true
       port: 8081
       path: "/swagger"
-    gen:
+    generator:
       enabled: true
       scan_dirs: ["./app"]
-      output_path: "./docs/swagger.json"
+      output_path: "./docs/openapi.yaml"
 ```
 
 ### 3. Add annotations to your code
@@ -118,10 +118,12 @@ security:
 
 ### UI Configuration
 
+`ui.port` is the port for the **Swagger UI page** itself. API requests from "Try it out" are sent to the **lynx-http** server (see `api_server` below).
+
 ```yaml
 ui:
   enabled: true
-  port: 8081                    # Must be >= 1024
+  port: 8081                    # Swagger UI page port (separate from lynx-http)
   path: "/swagger"
   title: "API Documentation"
   deep_linking: true
@@ -130,13 +132,39 @@ ui:
   default_models_expand_depth: 1
 ```
 
-### Generator Configuration
+### API Server Configuration (Try it out)
+
+Set `api_server` so Swagger UI "Try it out" sends requests to the correct lynx-http address. If not configured, the plugin reads `lynx.http.addr` automatically.
 
 ```yaml
-gen:
+api_server:
+  host: "localhost:8080"   # lynx-http listen address
+  base_path: "/api/v1"     # optional base path
+```
+
+| Port | Purpose |
+|------|---------|
+| `ui.port` (e.g. 8081) | Swagger UI documentation page |
+| `api_server.host` (e.g. localhost:8080) | lynx-http API server for "Try it out" |
+
+### Generator Configuration
+
+You can use **one or both** of:
+
+- **External spec files** (`generator.spec_files`): Load OpenAPI/Swagger YAML or JSON (Swagger 2.0 or OpenAPI 3.x, e.g. from `protoc-gen-openapi` in lynx-layout).
+- **Go annotation scan** (`generator.scan_dirs`): Scan Go source for `@Router`, `@Summary`, etc.
+
+External specs are loaded first and merged; then annotation scan results are merged. So you can use e.g. `openapi.yaml` from lynx-layout together with annotation-based routes.
+
+```yaml
+generator:
   enabled: true
   
-  # Safe scan directories (within current working directory only)
+  # Optional: load external OpenAPI/Swagger files (YAML or JSON, OAS2 or OAS3)
+  spec_files:
+    - "./openapi.yaml"
+  
+  # Directories to scan for Go Swagger annotations
   scan_dirs:
     - "./app/controllers"
     - "./app/handlers"
@@ -147,11 +175,28 @@ gen:
     - "./test"
     - "./.git"
   
-  output_path: "./docs/swagger.json"
+  output_path: "./docs/openapi.yaml"
   watch_enabled: true
   watch_interval: 5s
   gen_on_startup: true
 ```
+
+### One file: merge `make api` OpenAPI with annotation scan
+
+If you use **lynx-layout** (or any `make api` that runs protoc-gen-openapi), you can have a **single merged file**:
+
+1. **Makefile**: have `make api` output OpenAPI to `docs/` (e.g. `--openapi_out=...:./docs` → `docs/openapi.yaml`).
+2. **Config**: set both `spec_files` and `output_path` to that file. At runtime swagger loads it, merges annotation scan, and writes back to the same path.
+
+```yaml
+generator:
+  enabled: true
+  spec_files: ["./docs/openapi.yaml"]   # from make api
+  scan_dirs: ["./api", "./internal"]
+  output_path: "./docs/openapi.yaml"    # same file = one merged doc
+```
+
+Output format: use `.yaml`/`.yml` in `output_path` to write YAML (to match make api); use `.json` to write JSON.
 
 ## Environment Variables
 

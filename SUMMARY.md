@@ -75,7 +75,7 @@ plugins/swagger/
 lynx:
   swagger:
     enabled: true
-    gen:
+    generator:
       enabled: true
       scan_dirs:
         - "./controllers"

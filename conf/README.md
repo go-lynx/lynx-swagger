@@ -18,13 +18,17 @@ This directory contains configuration-related files for the Swagger plugin:
 Create a `config.yaml` or `config.yml` file in your project root directory, referencing the examples in this directory for configuration:
 
 ```yaml
-# config.yaml
+# config.yaml - single merged OpenAPI file (make api + swagger)
+# 1) Run `make api` to generate docs/openapi.yaml from .proto
+# 2) At runtime swagger loads it, merges annotation scan, and writes back to the same file
 lynx:
   swagger:
     enabled: true
-    gen:
-      scan_dirs: ["./controllers"]
-      output_path: "./docs/swagger.json"
+    generator:
+      enabled: true
+      spec_files: ["./docs/openapi.yaml"]   # from make api (protoc-gen-openapi)
+      scan_dirs: ["./api", "./internal"]
+      output_path: "./docs/openapi.yaml"    # same file = one merged doc
     ui:
       enabled: true
       port: 8080
@@ -43,18 +47,23 @@ Configuration loading priority (from high to low):
 
 #### Basic Configuration
 - `enabled`: Whether to enable the plugin
-- `gen.enabled`: Whether to enable documentation generation
+- `generator.enabled`: Whether to enable documentation generation
 - `ui.enabled`: Whether to enable UI service
 
 #### Scan Configuration
-- `gen.scan_dirs`: List of directories to scan
-- `gen.exclude_dirs`: Excluded directories
-- `gen.recursive`: Whether to scan recursively
+- `generator.scan_dirs`: List of directories to scan for Go Swagger annotations
+- `generator.spec_files`: List of external OpenAPI/Swagger spec files (YAML or JSON, Swagger 2.0 or OpenAPI 3.x, e.g. from protoc-gen-openapi). Loaded first, then merged with annotation scan result
+- `generator.exclude_dirs`: Excluded directories
+- `generator.recursive`: Whether to scan recursively
 
 #### UI Configuration
-- `ui.port`: UI service port
+- `ui.port`: Swagger UI page port (separate from lynx-http API port)
 - `ui.path`: UI access path
 - `ui.title`: Page title
+
+#### API Server (Try it out)
+- `api_server.host`: lynx-http address for Swagger UI "Try it out" (e.g. `localhost:8080`). If empty, reads from `lynx.http.addr`
+- `api_server.base_path`: Optional base path (e.g. `/api/v1`)
 
 #### API Information
 - `info.title`: API title
@@ -73,7 +82,7 @@ export LYNX_SWAGGER_ENABLED=true
 export LYNX_SWAGGER_UI_PORT=8080
 
 # Set scan directories
-export LYNX_SWAGGER_GEN_SCAN_DIRS="./controllers,./handlers"
+export LYNX_SWAGGER_GENERATOR_SCAN_DIRS="./controllers,./handlers"
 ```
 
 ### 5. Minimal Configuration Example
@@ -95,7 +104,7 @@ This will use default configuration:
 lynx:
   swagger:
     enabled: true
-    gen:
+    generator:
       enabled: false  # Disable auto-generation in production
       watch_enabled: false  # Disable file monitoring
     ui:
@@ -117,7 +126,7 @@ lynx:
 lynx:
   swagger:
     enabled: true
-    gen:
+    generator:
       enabled: true
       watch_enabled: true  # Enable hot updates
       watch_interval: 3s
@@ -154,7 +163,7 @@ A: Modify `ui.port` and `ui.path` configuration
 A: Configure `security_definitions` and `security` options
 
 ### Q: Documentation not updating automatically?
-A: Ensure `gen.watch_enabled: true` and have file write permissions
+A: Ensure `generator.watch_enabled: true` and have file write permissions
 
 ## More Information
 

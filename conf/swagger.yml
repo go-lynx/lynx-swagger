@@ -5,7 +5,7 @@ lynx:
     enabled: true
     
     # Documentation generation configuration
-    gen:
+    generator:
       # Whether to enable documentation generation
       enabled: true
       

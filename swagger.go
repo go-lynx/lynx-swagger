@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-lynx/lynx/log"
 	"github.com/go-lynx/lynx/plugins"
 	"github.com/go-openapi/spec"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -39,11 +41,18 @@ const (
 
 // SwaggerConfig plugin configuration
 type SwaggerConfig struct {
-	Enabled  bool           `json:"enabled" yaml:"enabled"`
-	Info     InfoConfig     `json:"info" yaml:"info"`
-	UI       UIConfig       `json:"ui" yaml:"ui"`
-	Gen      GenConfig      `json:"generator" yaml:"generator"`
-	Security SecurityConfig `json:"security" yaml:"security"`
+	Enabled   bool            `json:"enabled" yaml:"enabled"`
+	Info      InfoConfig      `json:"info" yaml:"info"`
+	UI        UIConfig        `json:"ui" yaml:"ui"`
+	Gen       GenConfig       `json:"generator" yaml:"generator"`
+	Security  SecurityConfig  `json:"security" yaml:"security"`
+	ApiServer ApiServerConfig `json:"api_server" yaml:"api_server"` // API server for Swagger UI "Try it out" (lynx-http address)
+}
+
+// ApiServerConfig configures the API server URL used by Swagger UI "Try it out". If empty, reads from lynx.http.addr.
+type ApiServerConfig struct {
+	Host     string `json:"host" yaml:"host"`           // e.g. "localhost:8080" (lynx-http listen address)
+	BasePath string `json:"base_path" yaml:"base_path"` // e.g. "/api/v1"
 }
 
 // SecurityConfig security configuration
@@ -87,6 +96,7 @@ type UIConfig struct {
 type GenConfig struct {
 	Enabled     bool              `json:"enabled" yaml:"enabled"`
 	ScanDirs    []string          `json:"scan_dirs" yaml:"scan_dirs"`
+	SpecFiles   []string          `json:"spec_files" yaml:"spec_files"` // External OpenAPI/Swagger files (YAML or JSON, OAS2 or OAS3)
 	OutputPath  string            `json:"output_path" yaml:"output_path"`
 	WatchFiles  bool              `json:"watch_files" yaml:"watch_files"`
 	FileWatcher FileWatcherConfig `json:"file_watcher" yaml:"file_watcher"`
@@ -95,13 +105,15 @@ type GenConfig struct {
 // PlugSwagger Swagger plugin
 type PlugSwagger struct {
 	*plugins.BasePlugin
-	config    *SwaggerConfig
-	swagger   *spec.Swagger
-	mu        sync.RWMutex
-	server    *http.Server
-	generator *Generator
-	watcher   *FileWatcher
-	uiServer  *http.Server
+	config            *SwaggerConfig
+	swagger           *spec.Swagger
+	mu                sync.RWMutex
+	server            *http.Server
+	generator         *Generator
+	watcher           *FileWatcher
+	uiServer          *http.Server
+	apiServerHost     string // Host:port for API server (lynx-http) used by Swagger UI "Try it out"
+	apiServerBasePath string
 }
 
 // Generator Swagger documentation generator
@@ -211,7 +223,7 @@ func NewSwaggerPlugin() *PlugSwagger {
 			Gen: GenConfig{
 				Enabled:    true,
 				ScanDirs:   []string{"./app"},
-				OutputPath: "./docs/swagger.json",
+				OutputPath: "./docs/openapi.yaml",
 				WatchFiles: true,
 				FileWatcher: FileWatcherConfig{
 					Enabled:       true,
@@ -245,7 +257,7 @@ func (p *PlugSwagger) InitializeResources(rt plugins.Runtime) error {
 		p.config.UI.Path = "/swagger"
 	}
 	if p.config.Gen.OutputPath == "" {
-		p.config.Gen.OutputPath = "./docs/swagger.json"
+		p.config.Gen.OutputPath = "./docs/openapi.yaml"
 	}
 
 	// Set default values
@@ -292,6 +304,9 @@ func (p *PlugSwagger) InitializeResources(rt plugins.Runtime) error {
 		}
 	}
 
+	// Derive API server (host:port) for Swagger UI "Try it out" from explicit config or lynx.http
+	p.deriveApiServerHost(rt)
+
 	return nil
 }
 
@@ -307,12 +322,32 @@ func (p *PlugSwagger) StartupTasks() error {
 		return fmt.Errorf("invalid swagger configuration: %w", err)
 	}
 
-	// Generate initial documentation
-	if p.config.Gen.Enabled {
+	// 1) Load external OpenAPI/Swagger files (e.g. openapi.yaml from lynx-layout) and merge into spec
+	if err := p.loadAndMergeExternalSpecs(); err != nil {
+		return fmt.Errorf("load external specs: %w", err)
+	}
+
+	// 2) Optionally scan Go annotations and merge into spec
+	if p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 {
 		if err := p.generateSwaggerDocs(); err != nil {
-			log.Errorf("Failed to generate swagger docs: %v", err)
+			log.Errorf("Failed to generate swagger docs from annotations: %v", err)
 		}
 	}
+
+	// 3) Ensure we have at least one path (e.g. placeholder) when serving UI
+	p.ensurePathsOrDefault()
+
+	// 4) Apply API server host (lynx-http) to spec so Swagger UI "Try it out" sends requests to correct server
+	p.applyApiServerToSpec()
+
+	// 5) Save merged doc and register
+	if err := p.saveSwaggerJSON(); err != nil {
+		return fmt.Errorf("save swagger json: %w", err)
+	}
+	if err := p.registerSwaggerToSwag(); err != nil {
+		return fmt.Errorf("register swagger: %w", err)
+	}
+	log.Info("Swagger documentation generated successfully")
 
 	// Start UI service
 	if p.config.UI.Enabled {
@@ -322,8 +357,8 @@ func (p *PlugSwagger) StartupTasks() error {
 		}
 	}
 
-	// Start file monitoring
-	if p.config.Gen.WatchFiles {
+	// Start file monitoring (only when using annotation scan)
+	if p.config.Gen.WatchFiles && p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 {
 		p.startFileWatcher()
 	}
 
@@ -353,12 +388,12 @@ func (p *PlugSwagger) CleanupTasks() error {
 	return nil
 }
 
-// generateSwaggerDocs generates Swagger documentation
+// generateSwaggerDocs scans Go annotations and merges routes into p.swagger. Does not save or register.
 func (p *PlugSwagger) generateSwaggerDocs() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	log.Info("Starting Swagger documentation generation...")
+	log.Info("Starting Swagger documentation generation from Go annotations...")
 
 	// Create annotation parser with allowed directories
 	parser := NewAnnotationParser(p.swagger, p.config.Gen.ScanDirs)
@@ -371,38 +406,46 @@ func (p *PlugSwagger) generateSwaggerDocs() error {
 		}
 	}
 
-	// If no paths are scanned, add example endpoint
-	if p.swagger.Paths == nil || len(p.swagger.Paths.Paths) == 0 {
-		p.swagger.Paths = &spec.Paths{
-			Paths: map[string]spec.PathItem{
-				"/health": {
-					PathItemProps: spec.PathItemProps{
-						Get: &spec.Operation{
-							OperationProps: spec.OperationProps{
-								ID:          "health-check",
-								Summary:     "Health Check",
-								Description: "Check the health status of the service",
-								Tags:        []string{"Health"},
-								Responses: &spec.Responses{
-									ResponsesProps: spec.ResponsesProps{
-										StatusCodeResponses: map[int]spec.Response{
-											200: {
-												ResponseProps: spec.ResponseProps{
-													Description: "Service is healthy",
-													Schema: &spec.Schema{
-														SchemaProps: spec.SchemaProps{
-															Type: []string{"object"},
-															Properties: map[string]spec.Schema{
-																"status": {
-																	SchemaProps: spec.SchemaProps{
-																		Type: []string{"string"},
-																	},
+	return nil
+}
+
+// ensurePathsOrDefault adds a default /health path when no paths exist.
+func (p *PlugSwagger) ensurePathsOrDefault() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.swagger.Paths != nil && len(p.swagger.Paths.Paths) > 0 {
+		return
+	}
+	p.swagger.Paths = &spec.Paths{
+		Paths: map[string]spec.PathItem{
+			"/health": {
+				PathItemProps: spec.PathItemProps{
+					Get: &spec.Operation{
+						OperationProps: spec.OperationProps{
+							ID:          "health-check",
+							Summary:     "Health Check",
+							Description: "Check the health status of the service",
+							Tags:        []string{"Health"},
+							Responses: &spec.Responses{
+								ResponsesProps: spec.ResponsesProps{
+									StatusCodeResponses: map[int]spec.Response{
+										200: {
+											ResponseProps: spec.ResponseProps{
+												Description: "Service is healthy",
+												Schema: &spec.Schema{
+													SchemaProps: spec.SchemaProps{
+														Type: []string{"object"},
+														Properties: map[string]spec.Schema{
+															"status": {
+																SchemaProps: spec.SchemaProps{
+																	Type: []string{"string"},
 																},
-																"timestamp": {
-																	SchemaProps: spec.SchemaProps{
-																		Type:   []string{"string"},
-																		Format: "date-time",
-																	},
+															},
+															"timestamp": {
+																SchemaProps: spec.SchemaProps{
+																	Type:   []string{"string"},
+																	Format: "date-time",
 																},
 															},
 														},
@@ -417,21 +460,8 @@ func (p *PlugSwagger) generateSwaggerDocs() error {
 					},
 				},
 			},
-		}
+		},
 	}
-
-	// Save documentation
-	if err := p.saveSwaggerJSON(); err != nil {
-		return fmt.Errorf("failed to save swagger json: %w", err)
-	}
-
-	// Register to internal registry
-	if err := p.registerSwaggerToSwag(); err != nil {
-		return fmt.Errorf("failed to register swagger: %w", err)
-	}
-
-	log.Info("Swagger documentation generated successfully")
-	return nil
 }
 
 // startSwaggerUI starts Swagger UI service
@@ -621,6 +651,11 @@ func (p *PlugSwagger) startFileWatcher() {
 				log.Errorf("Failed to regenerate docs: %v", err)
 				return err
 			}
+			// Persist updated spec to output_path
+			if err := p.saveSwaggerJSON(); err != nil {
+				log.Errorf("Failed to save swagger json after change: %v", err)
+				return err
+			}
 			return nil
 		},
 		config: FileWatcherConfig{
@@ -740,30 +775,48 @@ func (w *FileWatcher) GetStats() map[string]interface{} {
 	}
 }
 
-// saveSwaggerJSON saves Swagger JSON documentation
+// saveSwaggerJSON saves Swagger documentation to output_path. Writes YAML if path ends with .yaml/.yml, else JSON.
 func (p *PlugSwagger) saveSwaggerJSON() error {
 	if p.config.Gen.OutputPath == "" {
 		return nil
 	}
 
-	// Ensure directory exists
 	dir := filepath.Dir(p.config.Gen.OutputPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Serialize Swagger specification
-	data, err := json.MarshalIndent(p.swagger, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal swagger: %w", err)
+	ext := strings.ToLower(filepath.Ext(p.config.Gen.OutputPath))
+	isYAML := ext == ".yaml" || ext == ".yml"
+
+	var data []byte
+	var err error
+	if isYAML {
+		// Marshal to JSON then to map so we can output YAML (spec.Swagger has json tags)
+		var raw map[string]interface{}
+		jsonBytes, err := json.Marshal(p.swagger)
+		if err != nil {
+			return fmt.Errorf("failed to marshal swagger: %w", err)
+		}
+		if err = json.Unmarshal(jsonBytes, &raw); err != nil {
+			return fmt.Errorf("failed to convert to map: %w", err)
+		}
+		data, err = yaml.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("failed to marshal yaml: %w", err)
+		}
+	} else {
+		data, err = json.MarshalIndent(p.swagger, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal swagger: %w", err)
+		}
 	}
 
-	// Write to file
 	if err := os.WriteFile(p.config.Gen.OutputPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write swagger file: %w", err)
 	}
 
-	log.Infof("Swagger JSON saved to %s", p.config.Gen.OutputPath)
+	log.Infof("Swagger doc saved to %s", p.config.Gen.OutputPath)
 	return nil
 }
 
@@ -896,10 +949,33 @@ func (p *PlugSwagger) validateConfiguration() error {
 		return fmt.Errorf("swagger plugin is not allowed in environment: %s", p.getCurrentEnvironment())
 	}
 
-	// Validate scan directories
-	for _, dir := range p.config.Gen.ScanDirs {
-		if err := p.validateScanDirectory(dir); err != nil {
-			return fmt.Errorf("invalid scan directory %s: %w", dir, err)
+	// Validate at least one source: external spec files or scan directories (when generator enabled)
+	hasSpecFiles := len(p.config.Gen.SpecFiles) > 0
+	hasScanDirs := len(p.config.Gen.ScanDirs) > 0
+	if !hasSpecFiles && (!p.config.Gen.Enabled || !hasScanDirs) {
+		// When generator enabled, need either spec_files or scan_dirs
+		if p.config.Gen.Enabled {
+			return fmt.Errorf("invalid swagger configuration: either generator.spec_files or generator.scan_dirs must be set when generator.enabled is true")
+		}
+		// When generator disabled, need spec_files to have any doc to show
+		if p.config.UI.Enabled && !hasSpecFiles {
+			return fmt.Errorf("invalid swagger configuration: generator.spec_files is required when generator.enabled is false and UI is enabled")
+		}
+	}
+
+	// Validate external spec files (path exists and within cwd)
+	for _, f := range p.config.Gen.SpecFiles {
+		if err := p.validateSpecFile(f); err != nil {
+			return fmt.Errorf("invalid spec file %s: %w", f, err)
+		}
+	}
+
+	// Validate scan directories only when generator is enabled and scan_dirs are used
+	if p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 {
+		for _, dir := range p.config.Gen.ScanDirs {
+			if err := p.validateScanDirectory(dir); err != nil {
+				return fmt.Errorf("invalid scan directory %s: %w", dir, err)
+			}
 		}
 	}
 
@@ -911,6 +987,72 @@ func (p *PlugSwagger) validateConfiguration() error {
 	}
 
 	return nil
+}
+
+// validateSpecFile validates spec file path for security
+func (p *PlugSwagger) validateSpecFile(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return fmt.Errorf("file does not exist: %s", absPath)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current working directory: %w", err)
+	}
+	if !strings.HasPrefix(absPath, cwd) {
+		return fmt.Errorf("spec file must be within current working directory %s", cwd)
+	}
+	return nil
+}
+
+// deriveApiServerHost derives API server host:port from explicit config or lynx.http.addr.
+// Called in InitializeResources. Result is stored in p.apiServerHost and p.apiServerBasePath.
+func (p *PlugSwagger) deriveApiServerHost(rt plugins.Runtime) {
+	if p.config.ApiServer.Host != "" {
+		p.apiServerHost = p.config.ApiServer.Host
+		p.apiServerBasePath = p.config.ApiServer.BasePath
+		return
+	}
+	// Fallback: read lynx.http.addr
+	var httpConf struct {
+		Addr string `json:"addr" yaml:"addr"`
+	}
+	if err := rt.GetConfig().Value("lynx.http").Scan(&httpConf); err != nil || httpConf.Addr == "" {
+		log.Debugf("Swagger: could not read lynx.http.addr (use api_server.host to configure): %v", err)
+		return
+	}
+	addr := httpConf.Addr
+	if !strings.Contains(addr, ":") {
+		addr = ":" + addr
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		log.Warnf("Swagger: invalid lynx.http.addr %q: %v", httpConf.Addr, err)
+		return
+	}
+	// For ":8080" or "0.0.0.0:8080", use localhost for Try it out (same-machine testing)
+	if host == "" || host == "0.0.0.0" {
+		host = "localhost"
+	}
+	p.apiServerHost = net.JoinHostPort(host, port)
+	p.apiServerBasePath = p.config.ApiServer.BasePath
+	log.Infof("Swagger: API server for Try it out derived from lynx.http: %s%s", p.apiServerHost, p.apiServerBasePath)
+}
+
+// applyApiServerToSpec sets p.swagger.Host and BasePath for Swagger UI "Try it out" requests.
+func (p *PlugSwagger) applyApiServerToSpec() {
+	if p.apiServerHost == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.swagger.Host = p.apiServerHost
+	if p.apiServerBasePath != "" {
+		p.swagger.BasePath = p.apiServerBasePath
+	}
 }
 
 // validateScanDirectory validates scan directory for security
@@ -1009,6 +1151,6 @@ func (p *PlugSwagger) SetDefaultValues() {
 	}
 
 	if p.config.Gen.OutputPath == "" {
-		p.config.Gen.OutputPath = "./docs/swagger.json"
+		p.config.Gen.OutputPath = "./docs/openapi.yaml"
 	}
 }

@@ -91,7 +91,7 @@ plugins/swagger/
    lynx:
      swagger:
        enabled: true
-       gen:
+       generator:
          scan_dirs: ["./controllers"]
          output_path: "./docs/swagger.json"
        ui:
