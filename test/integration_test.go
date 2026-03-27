@@ -119,6 +119,10 @@ func (m *MockRuntime) SetConfig(conf config.Config) {
 	// Mock implementation - no-op
 }
 
+func (m *MockRuntime) Shutdown() {
+	// Mock implementation - no-op
+}
+
 func (m *MockRuntime) CleanupResources(pluginID string) error {
 	return nil
 }
