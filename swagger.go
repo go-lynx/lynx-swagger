@@ -273,7 +273,16 @@ func (p *PlugSwagger) InitializeResources(rt plugins.Runtime) error {
 	}
 
 	// Initialize Swagger specification
-	p.swagger = &spec.Swagger{
+	p.swagger = p.newBaseSwaggerSpec()
+
+	// Derive API server (host:port) for Swagger UI "Try it out" from explicit config or lynx.http
+	p.deriveApiServerHost(rt)
+
+	return nil
+}
+
+func (p *PlugSwagger) newBaseSwaggerSpec() *spec.Swagger {
+	swaggerDoc := &spec.Swagger{
 		SwaggerProps: spec.SwaggerProps{
 			Swagger: "2.0",
 			Info: &spec.Info{
@@ -292,22 +301,19 @@ func (p *PlugSwagger) InitializeResources(rt plugins.Runtime) error {
 
 	// Set contact information
 	if p.config.Info.Contact.Name != "" {
-		p.swagger.Info.Contact = &spec.ContactInfo{
+		swaggerDoc.Info.Contact = &spec.ContactInfo{
 			ContactInfoProps: spec.ContactInfoProps{},
 		}
 	}
 
 	// Set license information
 	if p.config.Info.License.Name != "" {
-		p.swagger.Info.License = &spec.License{
+		swaggerDoc.Info.License = &spec.License{
 			LicenseProps: spec.LicenseProps{},
 		}
 	}
 
-	// Derive API server (host:port) for Swagger UI "Try it out" from explicit config or lynx.http
-	p.deriveApiServerHost(rt)
-
-	return nil
+	return swaggerDoc
 }
 
 // StartupTasks startup tasks
@@ -322,23 +328,9 @@ func (p *PlugSwagger) StartupTasks() error {
 		return fmt.Errorf("invalid swagger configuration: %w", err)
 	}
 
-	// 1) Load external OpenAPI/Swagger files (e.g. openapi.yaml from lynx-layout) and merge into spec
-	if err := p.loadAndMergeExternalSpecs(); err != nil {
-		return fmt.Errorf("load external specs: %w", err)
+	if err := p.rebuildSwaggerDocs(); err != nil {
+		return fmt.Errorf("build swagger doc: %w", err)
 	}
-
-	// 2) Optionally scan Go annotations and merge into spec
-	if p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 {
-		if err := p.generateSwaggerDocs(); err != nil {
-			log.Errorf("Failed to generate swagger docs from annotations: %v", err)
-		}
-	}
-
-	// 3) Ensure we have at least one path (e.g. placeholder) when serving UI
-	p.ensurePathsOrDefault()
-
-	// 4) Apply API server host (lynx-http) to spec so Swagger UI "Try it out" sends requests to correct server
-	p.applyApiServerToSpec()
 
 	// 5) Save merged doc and register
 	if err := p.saveSwaggerJSON(); err != nil {
@@ -366,6 +358,30 @@ func (p *PlugSwagger) StartupTasks() error {
 	log.Infof("Swagger plugin registered to application")
 
 	log.Infof("Swagger plugin started successfully. UI available at %s", p.config.UI.Path)
+	return nil
+}
+
+func (p *PlugSwagger) rebuildSwaggerDocs() error {
+	p.UpdateSwagger(p.newBaseSwaggerSpec())
+
+	// 1) Load external OpenAPI/Swagger files (e.g. openapi.yaml from protoc-gen-openapi) and merge into spec.
+	if err := p.loadAndMergeExternalSpecs(); err != nil {
+		return fmt.Errorf("load external specs: %w", err)
+	}
+
+	// 2) Optionally scan Go annotations and merge into the same in-memory doc.
+	if p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 {
+		if err := p.generateSwaggerDocs(); err != nil {
+			log.Errorf("Failed to generate swagger docs from annotations: %v", err)
+		}
+	}
+
+	// 3) Ensure we have at least one path (e.g. placeholder) when serving UI.
+	p.ensurePathsOrDefault()
+
+	// 4) Apply API server host (lynx-http) to spec so Swagger UI "Try it out" sends requests to correct server.
+	p.applyApiServerToSpec()
+
 	return nil
 }
 
@@ -647,8 +663,8 @@ func (p *PlugSwagger) startFileWatcher() {
 	p.watcher = &FileWatcher{
 		paths: p.config.Gen.ScanDirs,
 		callback: func() error {
-			if err := p.generateSwaggerDocs(); err != nil {
-				log.Errorf("Failed to regenerate docs: %v", err)
+			if err := p.rebuildSwaggerDocs(); err != nil {
+				log.Errorf("Failed to rebuild docs: %v", err)
 				return err
 			}
 			// Persist updated spec to output_path
@@ -950,7 +966,8 @@ func (p *PlugSwagger) validateConfiguration() error {
 	}
 
 	// Validate at least one source: external spec files or scan directories (when generator enabled)
-	hasSpecFiles := len(p.config.Gen.SpecFiles) > 0
+	specFiles := p.resolvedSpecFiles()
+	hasSpecFiles := len(specFiles) > 0
 	hasScanDirs := len(p.config.Gen.ScanDirs) > 0
 	if !hasSpecFiles && (!p.config.Gen.Enabled || !hasScanDirs) {
 		// When generator enabled, need either spec_files or scan_dirs
@@ -964,7 +981,7 @@ func (p *PlugSwagger) validateConfiguration() error {
 	}
 
 	// Validate external spec files (path exists and within cwd)
-	for _, f := range p.config.Gen.SpecFiles {
+	for _, f := range specFiles {
 		if err := p.validateSpecFile(f); err != nil {
 			return fmt.Errorf("invalid spec file %s: %w", f, err)
 		}

@@ -180,11 +180,25 @@ type PropertyInfo struct {
 
 // NewAnnotationParser creates an annotation parser
 func NewAnnotationParser(swagger *spec.Swagger, allowedDirs []string) *AnnotationParser {
+	normalizedAllowedDirs := make([]string, 0, len(allowedDirs))
+	for _, dir := range allowedDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			normalizedAllowedDirs = append(normalizedAllowedDirs, filepath.Clean(dir))
+			continue
+		}
+		normalizedAllowedDirs = append(normalizedAllowedDirs, filepath.Clean(absDir))
+	}
+
 	return &AnnotationParser{
 		swagger:     swagger,
 		routes:      make(map[string]*RouteInfo),
 		models:      make(map[string]*ModelInfo),
-		allowedDirs: allowedDirs,
+		allowedDirs: normalizedAllowedDirs,
 		stats:       &ParseStats{},
 		sbPool:      NewStringBuilderPool(100), // Initialize with a small pool
 	}
@@ -1224,8 +1238,15 @@ func (p *AnnotationParser) ScanDirectory(dir string) error {
 
 // isAllowedDir checks if a directory is allowed for scanning
 func (p *AnnotationParser) isAllowedDir(dir string) bool {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	absDir = filepath.Clean(absDir)
+
 	for _, allowedDir := range p.allowedDirs {
-		if strings.HasPrefix(dir, allowedDir) {
+		allowedDir = filepath.Clean(allowedDir)
+		if absDir == allowedDir || strings.HasPrefix(absDir, allowedDir+string(os.PathSeparator)) {
 			return true
 		}
 	}

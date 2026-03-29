@@ -16,10 +16,11 @@ import (
 
 // loadAndMergeExternalSpecs loads all generator.spec_files and merges them into p.swagger.
 func (p *PlugSwagger) loadAndMergeExternalSpecs() error {
-	if len(p.config.Gen.SpecFiles) == 0 {
+	specFiles := p.resolvedSpecFiles()
+	if len(specFiles) == 0 {
 		return nil
 	}
-	for _, path := range p.config.Gen.SpecFiles {
+	for _, path := range specFiles {
 		loaded, err := loadSpecFile(path)
 		if err != nil {
 			return fmt.Errorf("load spec file %s: %w", path, err)
@@ -28,6 +29,45 @@ func (p *PlugSwagger) loadAndMergeExternalSpecs() error {
 		log.Infof("Loaded and merged external spec: %s", path)
 	}
 	return nil
+}
+
+func (p *PlugSwagger) resolvedSpecFiles() []string {
+	seen := make(map[string]struct{}, len(p.config.Gen.SpecFiles)+1)
+	files := make([]string, 0, len(p.config.Gen.SpecFiles)+1)
+	add := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		cleaned := filepath.Clean(path)
+		key := cleaned
+		if abs, err := filepath.Abs(cleaned); err == nil {
+			key = abs
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		files = append(files, cleaned)
+	}
+
+	for _, path := range p.config.Gen.SpecFiles {
+		add(path)
+	}
+
+	// Compatibility mode: if the project already has docs/openapi.yaml and the
+	// user did not explicitly configure spec_files, treat the existing output file
+	// as the baseline protobuf/OpenAPI document and merge annotation scan into it.
+	if len(files) == 0 {
+		outputPath := strings.TrimSpace(p.config.Gen.OutputPath)
+		if outputPath != "" {
+			if info, err := os.Stat(outputPath); err == nil && !info.IsDir() {
+				add(outputPath)
+			}
+		}
+	}
+
+	return files
 }
 
 // loadSpecFile reads a single file (YAML or JSON), detects OAS2 vs OAS3, and returns *spec.Swagger.
