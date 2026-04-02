@@ -507,32 +507,54 @@ func (p *AnnotationParser) parseParam(line string) *ParamInfo {
 
 	// Split by spaces, but be careful with quoted strings
 	parts := p.splitParamLine(line)
-	if len(parts) < 6 {
+	if len(parts) < 5 {
 		return nil
+	}
+
+	typeName := strings.TrimSpace(parts[2])
+	format := ""
+	requiredIdx := 3
+	descriptionIdx := 4
+
+	// Support both common forms:
+	//   @Param id path int true "desc"
+	//   @Param id path integer int64 true "desc"
+	if len(parts) > 3 && parts[3] != "true" && parts[3] != "false" {
+		if len(parts) < 6 {
+			return nil
+		}
+		format = strings.TrimSpace(parts[3])
+		requiredIdx = 4
+		descriptionIdx = 5
+	}
+
+	typeName, inferredFormat := p.normalizeSwaggerType(typeName)
+	if format == "" {
+		format = inferredFormat
 	}
 
 	param := &ParamInfo{
 		Name:        strings.TrimSpace(parts[0]),
 		In:          strings.TrimSpace(parts[1]),
-		Type:        strings.TrimSpace(parts[2]),
-		Format:      strings.TrimSpace(parts[3]),
-		Required:    strings.TrimSpace(parts[4]) == "true",
-		Description: strings.Trim(strings.TrimSpace(parts[5]), `"'`),
+		Type:        typeName,
+		Format:      format,
+		Required:    strings.TrimSpace(parts[requiredIdx]) == "true",
+		Description: strings.Trim(strings.TrimSpace(parts[descriptionIdx]), `"'`),
 	}
 
 	// Parse default value if present
-	if len(parts) > 6 && strings.Contains(parts[6], "default(") {
-		defaultVal := p.extractValue(parts[6], "default")
-		if defaultVal != "" {
-			param.Default = p.parseValue(defaultVal, param.Type)
+	for _, extra := range parts[descriptionIdx+1:] {
+		if strings.Contains(extra, "default(") {
+			defaultVal := p.extractValue(extra, "default")
+			if defaultVal != "" {
+				param.Default = p.parseValue(defaultVal, param.Type)
+			}
 		}
-	}
-
-	// Parse example value if present
-	if len(parts) > 7 && strings.Contains(parts[7], "example(") {
-		exampleVal := p.extractValue(parts[7], "example")
-		if exampleVal != "" {
-			param.Example = p.parseValue(exampleVal, param.Type)
+		if strings.Contains(extra, "example(") {
+			exampleVal := p.extractValue(extra, "example")
+			if exampleVal != "" {
+				param.Example = p.parseValue(exampleVal, param.Type)
+			}
 		}
 	}
 
@@ -617,7 +639,7 @@ func (p *AnnotationParser) parseResponse(line string) (int, *ResponseInfo) {
 
 	// Split by spaces
 	parts := strings.Fields(line)
-	if len(parts) < 4 {
+	if len(parts) < 2 {
 		return 0, nil
 	}
 
@@ -632,26 +654,54 @@ func (p *AnnotationParser) parseResponse(line string) (int, *ResponseInfo) {
 		}
 	}
 
+	resp := &ResponseInfo{
+		Headers: make(map[string]HeaderInfo),
+	}
+
+	// Support no-schema responses:
+	//   @Success 204 "Deleted successfully"
+	if strings.HasPrefix(parts[1], "\"") || strings.HasPrefix(parts[1], "'") {
+		resp.Description = strings.Trim(strings.Join(parts[1:], " "), `"'`)
+		return code, resp
+	}
+
+	if len(parts) < 4 {
+		return 0, nil
+	}
+
 	// Parse response type and model
 	responseType := strings.Trim(parts[1], "{}")
 	modelName := parts[2]
 
 	// Parse description if present
-	description := ""
-	if len(parts) > 3 {
-		description = strings.Trim(strings.Join(parts[3:], " "), `"'`)
-	}
+	description := strings.Trim(strings.Join(parts[3:], " "), `"'`)
+	schemaType, schemaFormat := p.normalizeSwaggerType(modelName)
 
-	resp := &ResponseInfo{
-		Description: description,
-		Schema: &SchemaInfo{
-			Type: responseType,
-			Ref:  modelName,
-		},
-		Headers: make(map[string]HeaderInfo),
+	resp.Description = description
+	resp.Schema = &SchemaInfo{
+		Type:   responseType,
+		Format: schemaFormat,
+		Ref:    modelName,
+	}
+	if responseType != "" && responseType != "object" && responseType != "array" {
+		resp.Schema.Type = schemaType
 	}
 
 	return code, resp
+}
+
+func (p *AnnotationParser) normalizeSwaggerType(typeName string) (string, string) {
+	typeName = strings.TrimSpace(typeName)
+	if typeName == "" {
+		return "", ""
+	}
+
+	mapped := p.mapGoTypeToSwagger(typeName)
+	if strings.Contains(mapped, ":") {
+		parts := strings.SplitN(mapped, ":", 2)
+		return parts[0], parts[1]
+	}
+	return mapped, ""
 }
 
 // parseSecurity parses security annotations

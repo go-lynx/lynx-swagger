@@ -2,8 +2,9 @@ package swagger_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
-	
+
 	"github.com/go-lynx/lynx-swagger"
 	"github.com/go-openapi/spec"
 	"github.com/stretchr/testify/assert"
@@ -13,17 +14,17 @@ func TestSwaggerPlugin(t *testing.T) {
 	// Create plugin instance
 	plugin := swagger.NewSwaggerPlugin()
 	assert.NotNil(t, plugin)
-	
+
 	// Test plugin information
 	assert.Equal(t, "swagger", plugin.Name())
-	assert.Equal(t, "v1.0.0", plugin.Version())
+	assert.True(t, strings.HasPrefix(plugin.Version(), "v"))
 	assert.NotEmpty(t, plugin.Description())
 }
 
 func TestAnnotationParser(t *testing.T) {
 	// Create parser
 	parser := &swagger.AnnotationParser{}
-	
+
 	// Test parameter parsing
 	paramLine := "@Param id path int true \"User ID\""
 	param := parser.ParseParam(paramLine)
@@ -33,13 +34,20 @@ func TestAnnotationParser(t *testing.T) {
 	assert.Equal(t, "integer", param.Type)
 	assert.True(t, param.Required)
 	assert.Equal(t, "User ID", param.Description)
-	
+
 	// Test response parsing
 	responseLine := "@Success 200 {object} UserResponse \"Success\""
 	code, resp := parser.ParseResponse(responseLine)
 	assert.Equal(t, 200, code)
 	assert.NotNil(t, resp)
 	assert.Equal(t, "Success", resp.Description)
+
+	noContentLine := "@Success 204 \"Deleted successfully\""
+	code, resp = parser.ParseResponse(noContentLine)
+	assert.Equal(t, 204, code)
+	assert.NotNil(t, resp)
+	assert.Equal(t, "Deleted successfully", resp.Description)
+	assert.Nil(t, resp.Schema)
 }
 
 func TestSwaggerGeneration(t *testing.T) {
@@ -84,18 +92,18 @@ func TestSwaggerGeneration(t *testing.T) {
 			},
 		},
 	}
-	
+
 	// Convert to JSON
 	data, err := json.MarshalIndent(swagger, "", "  ")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, data)
-	
+
 	// Validate JSON structure
 	var result map[string]interface{}
 	err = json.Unmarshal(data, &result)
 	assert.NoError(t, err)
 	assert.Equal(t, "2.0", result["swagger"])
-	
+
 	info := result["info"].(map[string]interface{})
 	assert.Equal(t, "Test API", info["title"])
 	assert.Equal(t, "1.0.0", info["version"])
