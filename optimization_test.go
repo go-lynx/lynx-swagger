@@ -1,6 +1,8 @@
 package swagger
 
 import (
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,4 +93,87 @@ func TestParseStats(t *testing.T) {
 	// Test error summary
 	summary := parser.GetErrorSummary()
 	assert.Empty(t, summary)
+}
+
+func TestPlugSwaggerCleanupTasksStopsWatcherOnce(t *testing.T) {
+	plugin := NewSwaggerPlugin()
+	plugin.watcher = &FileWatcher{
+		stop: make(chan struct{}),
+		config: FileWatcherConfig{
+			Interval:      10 * time.Millisecond,
+			DebounceDelay: 10 * time.Millisecond,
+			MaxRetries:    1,
+			RetryDelay:    10 * time.Millisecond,
+		},
+		callback: func() error { return nil },
+		healthy:  true,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		plugin.watcher.watch()
+		close(done)
+	}()
+
+	if err := plugin.CleanupTasks(); err != nil {
+		t.Fatalf("first cleanup failed: %v", err)
+	}
+	if err := plugin.CleanupTasks(); err != nil {
+		t.Fatalf("second cleanup failed: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("watcher did not stop after cleanup")
+	}
+}
+
+func TestFileWatcherProcessChangesStopsDuringRetryBackoff(t *testing.T) {
+	var attempts atomic.Int32
+	firstAttempt := make(chan struct{})
+
+	watcher := &FileWatcher{
+		stop: make(chan struct{}),
+		config: FileWatcherConfig{
+			MaxRetries: 3,
+			RetryDelay: 250 * time.Millisecond,
+		},
+		callback: func() error {
+			if attempts.Add(1) == 1 {
+				close(firstAttempt)
+			}
+			return errors.New("rebuild failed")
+		},
+		healthy: true,
+	}
+	watcher.mu.Lock()
+	watcher.changeCount = 1
+	watcher.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		watcher.processChanges()
+		close(done)
+	}()
+
+	select {
+	case <-firstAttempt:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("callback was not invoked")
+	}
+
+	stopTime := time.Now()
+	watcher.stopWatching()
+
+	select {
+	case <-done:
+		if time.Since(stopTime) >= 150*time.Millisecond {
+			t.Fatal("processChanges did not stop promptly after stop signal")
+		}
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("processChanges remained blocked during retry backoff")
+	}
+
+	assert.Equal(t, int32(1), attempts.Load())
 }

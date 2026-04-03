@@ -196,6 +196,7 @@ type FileWatcher struct {
 	paths       []string
 	callback    func() error
 	stop        chan struct{}
+	stopOnce    sync.Once
 	config      FileWatcherConfig
 	lastChange  time.Time
 	changeCount int
@@ -389,7 +390,7 @@ func (p *PlugSwagger) rebuildSwaggerDocs() error {
 func (p *PlugSwagger) CleanupTasks() error {
 	// Stop file monitoring
 	if p.watcher != nil {
-		close(p.watcher.stop)
+		p.watcher.stopWatching()
 	}
 
 	// Stop UI server
@@ -685,11 +686,21 @@ func (p *PlugSwagger) startFileWatcher() {
 		},
 		lastChange:  time.Now(),
 		changeCount: 0,
+		stop:        make(chan struct{}),
 		mu:          sync.RWMutex{},
 		healthy:     true,
 	}
 
 	go p.watcher.watch()
+}
+
+func (w *FileWatcher) stopWatching() {
+	if w == nil || w.stop == nil {
+		return
+	}
+	w.stopOnce.Do(func() {
+		close(w.stop)
+	})
 }
 
 // watch monitors file changes with enhanced logic
@@ -760,7 +771,15 @@ func (w *FileWatcher) processChanges() {
 			delay := w.config.RetryDelay * time.Duration(1<<attempt)
 			log.Warnf("Failed to process changes (attempt %d/%d), retrying in %v",
 				attempt+1, w.config.MaxRetries, delay)
-			time.Sleep(delay)
+			retryTimer := time.NewTimer(delay)
+			select {
+			case <-w.stop:
+				if !retryTimer.Stop() {
+					<-retryTimer.C
+				}
+				return
+			case <-retryTimer.C:
+			}
 		}
 	}
 
