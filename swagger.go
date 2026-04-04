@@ -106,6 +106,7 @@ type GenConfig struct {
 type PlugSwagger struct {
 	*plugins.BasePlugin
 	config            *SwaggerConfig
+	rt                plugins.Runtime
 	swagger           *spec.Swagger
 	mu                sync.RWMutex
 	server            *http.Server
@@ -246,6 +247,10 @@ func NewSwaggerPlugin() *PlugSwagger {
 
 // InitializeResources initializes resources
 func (p *PlugSwagger) InitializeResources(rt plugins.Runtime) error {
+	if err := p.BasePlugin.InitializeResources(rt); err != nil {
+		return err
+	}
+	p.rt = rt
 	// Load configuration
 	if err := rt.GetConfig().Value(confPrefix).Scan(p.config); err != nil {
 		log.Warnf("Failed to load swagger config, using defaults: %v", err)
@@ -323,25 +328,48 @@ func (p *PlugSwagger) newBaseSwaggerSpec() *spec.Swagger {
 
 // StartupTasks startup tasks
 func (p *PlugSwagger) StartupTasks() error {
+	return p.startupWithContext(context.Background())
+}
+
+func (p *PlugSwagger) startupWithContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("swagger startup canceled before execution: %w", err)
+	}
+	if p.rt != nil {
+		if err := p.rt.RegisterSharedResource(pluginName, p); err != nil {
+			p.publishRuntimeContract(false, false)
+			return fmt.Errorf("failed to register Swagger shared resource: %w", err)
+		}
+		p.registerRuntimePluginAlias()
+		if err := p.rt.RegisterPrivateResource("config", p.config); err != nil {
+			log.Warnf("failed to register Swagger private config resource: %v", err)
+		}
+	}
 	if !p.config.Enabled {
 		log.Info("Swagger plugin is disabled")
+		p.publishRuntimeContract(false, true)
 		return nil
 	}
+	p.publishRuntimeContract(false, false)
 
 	// Validate configuration
 	if err := p.validateConfiguration(); err != nil {
+		p.publishRuntimeContract(false, false)
 		return fmt.Errorf("invalid swagger configuration: %w", err)
 	}
 
 	if err := p.rebuildSwaggerDocs(); err != nil {
+		p.publishRuntimeContract(false, false)
 		return fmt.Errorf("build swagger doc: %w", err)
 	}
 
 	// 5) Save merged doc and register
 	if err := p.saveSwaggerJSON(); err != nil {
+		p.publishRuntimeContract(false, false)
 		return fmt.Errorf("save swagger json: %w", err)
 	}
 	if err := p.registerSwaggerToSwag(); err != nil {
+		p.publishRuntimeContract(false, false)
 		return fmt.Errorf("register swagger: %w", err)
 	}
 	log.Info("Swagger documentation generated successfully")
@@ -350,6 +378,7 @@ func (p *PlugSwagger) StartupTasks() error {
 	if p.config.UI.Enabled {
 		r := p.startSwaggerUI()
 		if r != nil {
+			p.publishRuntimeContract(false, false)
 			return fmt.Errorf("failed to start swagger UI server: %w", r)
 		}
 	}
@@ -359,8 +388,37 @@ func (p *PlugSwagger) StartupTasks() error {
 		p.startFileWatcher()
 	}
 
+	if p.rt != nil {
+		if p.generator != nil {
+			if err := p.rt.RegisterPrivateResource("generator", p.generator); err != nil {
+				log.Warnf("failed to register Swagger private generator resource: %v", err)
+			}
+		}
+		if p.swagger != nil {
+			if err := p.rt.RegisterPrivateResource("swagger", p.swagger); err != nil {
+				log.Warnf("failed to register Swagger private spec resource: %v", err)
+			}
+		}
+		if p.uiServer != nil {
+			if err := p.rt.RegisterPrivateResource("ui_server", p.uiServer); err != nil {
+				log.Warnf("failed to register Swagger private UI server resource: %v", err)
+			}
+		}
+		if p.watcher != nil {
+			if err := p.rt.RegisterPrivateResource("file_watcher", p.watcher); err != nil {
+				log.Warnf("failed to register Swagger private file watcher resource: %v", err)
+			}
+		}
+	}
+
 	// Log that plugin has started
 	log.Infof("Swagger plugin registered to application")
+
+	if err := p.CheckHealth(); err != nil {
+		p.publishRuntimeContract(false, false)
+		return err
+	}
+	p.publishRuntimeContract(true, true)
 
 	log.Infof("Swagger plugin started successfully. UI available at %s", p.config.UI.Path)
 	return nil
@@ -392,6 +450,14 @@ func (p *PlugSwagger) rebuildSwaggerDocs() error {
 
 // CleanupTasks cleanup tasks
 func (p *PlugSwagger) CleanupTasks() error {
+	return p.cleanupWithContext(context.Background())
+}
+
+func (p *PlugSwagger) cleanupWithContext(parentCtx context.Context) error {
+	if err := parentCtx.Err(); err != nil {
+		return fmt.Errorf("swagger cleanup canceled before execution: %w", err)
+	}
+	p.publishRuntimeContract(false, false)
 	// Stop file monitoring
 	if p.watcher != nil {
 		p.watcher.stopWatching()
@@ -399,11 +465,12 @@ func (p *PlugSwagger) CleanupTasks() error {
 
 	// Stop UI server
 	if p.uiServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
 		defer cancel()
 		if err := p.uiServer.Shutdown(ctx); err != nil {
 			log.Errorf("Failed to shutdown swagger UI server: %v", err)
 		}
+		p.uiServer = nil
 	}
 
 	return nil
@@ -525,10 +592,15 @@ func (p *PlugSwagger) startSwaggerUI() error {
 		MaxHeaderBytes: maxRequestSize,
 	}
 
+	listener, err := net.Listen("tcp", p.uiServer.Addr)
+	if err != nil {
+		return err
+	}
+
 	// Start server in the background
 	go func() {
-		log.Infof("Starting Swagger UI server on http://localhost:%d%s", port, swaggerPath)
-		if err := p.uiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Infof("Starting Swagger UI server on http://%s%s", listener.Addr().String(), swaggerPath)
+		if err := p.uiServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Errorf("Failed to start Swagger UI server: %v", err)
 		}
 	}()
@@ -923,6 +995,15 @@ func (p *PlugSwagger) CheckHealth() error {
 	// Check if documentation is generated
 	if p.swagger == nil || p.swagger.Paths == nil {
 		return fmt.Errorf("swagger documentation not generated")
+	}
+	if p.config.UI.Enabled && p.uiServer == nil {
+		return fmt.Errorf("swagger UI server not initialized")
+	}
+	if p.shouldStartFileWatcher() && p.watcher == nil {
+		return fmt.Errorf("swagger file watcher not initialized")
+	}
+	if p.watcher != nil && !p.watcher.IsHealthy() {
+		return fmt.Errorf("swagger file watcher is unhealthy")
 	}
 
 	return nil

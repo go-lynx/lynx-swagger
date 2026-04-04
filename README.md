@@ -2,6 +2,8 @@
 
 `lynx-swagger` generates Swagger/OpenAPI documents and serves a separate Swagger UI HTTP endpoint.
 
+> Environment boundary: the current module is recommended only for development and testing environments. The runtime guard path still blocks production and staging by default, and the shipped configuration examples are intentionally aligned to dev/test use only.
+
 ## Runtime facts
 
 - Go module: `github.com/go-lynx/lynx-swagger`
@@ -65,6 +67,14 @@ lynx:
 - `api_server.host` controls where Swagger UI sends "Try it out" requests. If it is empty, the plugin tries to derive it from `lynx.http.addr`.
 - The current HTML uses `ui.deepLinking` and `ui.docExpansion`.
 - `ui.displayRequestDuration`, `ui.defaultModelsExpandDepth`, and `security.require_auth` are parsed but not enforced/rendered by the current handler.
+
+## Parsed but not effective today
+
+The following fields are parsed from configuration but are not fully effective in the current runtime:
+
+- `security.require_auth`: stored in config, but the current HTTP handler does not enforce extra UI authentication
+- `ui.displayRequestDuration`: parsed, but the current HTML template does not render the request-duration toggle
+- `ui.defaultModelsExpandDepth`: parsed, but the current HTML template does not apply the model expansion depth option
 
 ## Keys you should not rely on
 
