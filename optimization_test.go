@@ -129,6 +129,64 @@ func TestPlugSwaggerCleanupTasksStopsWatcherOnce(t *testing.T) {
 	}
 }
 
+func TestFileWatcherGetStatsDoesNotPanic(t *testing.T) {
+	watcher := &FileWatcher{
+		paths:       []string{"./api"},
+		lastChange:  time.Now(),
+		changeCount: 2,
+		healthy:     true,
+	}
+
+	assert.NotPanics(t, func() {
+		stats := watcher.GetStats()
+		assert.Equal(t, true, stats["healthy"])
+		assert.Equal(t, 2, stats["change_count"])
+		assert.Equal(t, []string{"./api"}, stats["paths"])
+	})
+}
+
+func TestPlugSwaggerStartFileWatcherUsesConfiguredFileWatcherOptions(t *testing.T) {
+	plugin := NewSwaggerPlugin()
+	plugin.config.Gen.ScanDirs = []string{"./app"}
+	plugin.config.Gen.WatchFiles = true
+	plugin.config.Gen.FileWatcher = FileWatcherConfig{
+		Enabled:       true,
+		Interval:      25 * time.Millisecond,
+		DebounceDelay: 35 * time.Millisecond,
+		MaxRetries:    7,
+		RetryDelay:    45 * time.Millisecond,
+		BatchSize:     11,
+		HealthCheck:   false,
+	}
+
+	plugin.startFileWatcher()
+	defer func() { _ = plugin.CleanupTasks() }()
+
+	if plugin.watcher == nil {
+		t.Fatal("expected watcher to be created")
+	}
+
+	assert.Equal(t, plugin.config.Gen.FileWatcher.Interval, plugin.watcher.config.Interval)
+	assert.Equal(t, plugin.config.Gen.FileWatcher.DebounceDelay, plugin.watcher.config.DebounceDelay)
+	assert.Equal(t, plugin.config.Gen.FileWatcher.MaxRetries, plugin.watcher.config.MaxRetries)
+	assert.Equal(t, plugin.config.Gen.FileWatcher.RetryDelay, plugin.watcher.config.RetryDelay)
+	assert.Equal(t, plugin.config.Gen.FileWatcher.BatchSize, plugin.watcher.config.BatchSize)
+	assert.Equal(t, plugin.config.Gen.FileWatcher.HealthCheck, plugin.watcher.config.HealthCheck)
+}
+
+func TestPlugSwaggerStartFileWatcherRespectsDisabledFileWatcherConfig(t *testing.T) {
+	plugin := NewSwaggerPlugin()
+	plugin.config.Gen.ScanDirs = []string{"./app"}
+	plugin.config.Gen.WatchFiles = true
+	plugin.config.Gen.FileWatcher.Enabled = false
+
+	plugin.startFileWatcher()
+
+	if plugin.watcher != nil {
+		t.Fatal("expected watcher to remain nil when file watcher is disabled")
+	}
+}
+
 func TestFileWatcherProcessChangesStopsDuringRetryBackoff(t *testing.T) {
 	var attempts atomic.Int32
 	firstAttempt := make(chan struct{})

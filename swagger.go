@@ -204,6 +204,18 @@ type FileWatcher struct {
 	healthy     bool
 }
 
+func defaultFileWatcherConfig() FileWatcherConfig {
+	return FileWatcherConfig{
+		Enabled:       true,
+		Interval:      1 * time.Second,
+		DebounceDelay: 500 * time.Millisecond,
+		MaxRetries:    3,
+		RetryDelay:    1 * time.Second,
+		BatchSize:     10,
+		HealthCheck:   true,
+	}
+}
+
 // NewSwaggerPlugin creates a Swagger plugin
 func NewSwaggerPlugin() *PlugSwagger {
 	return &PlugSwagger{
@@ -222,19 +234,11 @@ func NewSwaggerPlugin() *PlugSwagger {
 				Enabled: true,
 			},
 			Gen: GenConfig{
-				Enabled:    true,
-				ScanDirs:   []string{"./app"},
-				OutputPath: "./docs/openapi.yaml",
-				WatchFiles: true,
-				FileWatcher: FileWatcherConfig{
-					Enabled:       true,
-					Interval:      1 * time.Second,
-					DebounceDelay: 500 * time.Millisecond,
-					MaxRetries:    3,
-					RetryDelay:    1 * time.Second,
-					BatchSize:     10,
-					HealthCheck:   true,
-				},
+				Enabled:     true,
+				ScanDirs:    []string{"./app"},
+				OutputPath:  "./docs/openapi.yaml",
+				WatchFiles:  true,
+				FileWatcher: defaultFileWatcherConfig(),
 			},
 		},
 	}
@@ -351,7 +355,7 @@ func (p *PlugSwagger) StartupTasks() error {
 	}
 
 	// Start file monitoring (only when using annotation scan)
-	if p.config.Gen.WatchFiles && p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 {
+	if p.shouldStartFileWatcher() {
 		p.startFileWatcher()
 	}
 
@@ -661,6 +665,11 @@ func (p *PlugSwagger) escapeHTML(s string) string {
 
 // startFileWatcher starts file monitoring
 func (p *PlugSwagger) startFileWatcher() {
+	fileWatcherConfig := p.fileWatcherConfig()
+	if !fileWatcherConfig.Enabled {
+		return
+	}
+
 	p.watcher = &FileWatcher{
 		paths: p.config.Gen.ScanDirs,
 		callback: func() error {
@@ -675,15 +684,7 @@ func (p *PlugSwagger) startFileWatcher() {
 			}
 			return nil
 		},
-		config: FileWatcherConfig{
-			Enabled:       true,
-			Interval:      1 * time.Second,
-			DebounceDelay: 500 * time.Millisecond,
-			MaxRetries:    3,
-			RetryDelay:    1 * time.Second,
-			BatchSize:     10,
-			HealthCheck:   true,
-		},
+		config:      fileWatcherConfig,
 		lastChange:  time.Now(),
 		changeCount: 0,
 		stop:        make(chan struct{}),
@@ -800,7 +801,7 @@ func (w *FileWatcher) IsHealthy() bool {
 // GetStats returns file watcher statistics
 func (w *FileWatcher) GetStats() map[string]interface{} {
 	w.mu.RLock()
-	defer w.mu.Unlock()
+	defer w.mu.RUnlock()
 
 	return map[string]interface{}{
 		"healthy":      w.healthy,
@@ -1189,4 +1190,33 @@ func (p *PlugSwagger) SetDefaultValues() {
 	if p.config.Gen.OutputPath == "" {
 		p.config.Gen.OutputPath = "./docs/openapi.yaml"
 	}
+
+	p.config.Gen.FileWatcher = p.fileWatcherConfig()
+}
+
+func (p *PlugSwagger) shouldStartFileWatcher() bool {
+	return p.config.Gen.WatchFiles && p.config.Gen.Enabled && len(p.config.Gen.ScanDirs) > 0 && p.fileWatcherConfig().Enabled
+}
+
+func (p *PlugSwagger) fileWatcherConfig() FileWatcherConfig {
+	cfg := p.config.Gen.FileWatcher
+	defaults := defaultFileWatcherConfig()
+
+	if cfg.Interval <= 0 {
+		cfg.Interval = defaults.Interval
+	}
+	if cfg.DebounceDelay <= 0 {
+		cfg.DebounceDelay = defaults.DebounceDelay
+	}
+	if cfg.MaxRetries <= 0 {
+		cfg.MaxRetries = defaults.MaxRetries
+	}
+	if cfg.RetryDelay <= 0 {
+		cfg.RetryDelay = defaults.RetryDelay
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = defaults.BatchSize
+	}
+
+	return cfg
 }

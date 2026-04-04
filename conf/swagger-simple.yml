@@ -1,33 +1,31 @@
-# Swagger Plugin Simple Configuration Example (Quick Start)
+# Swagger minimal runtime example
 lynx:
   swagger:
-    # Enable plugin
     enabled: true
-    
-    # Documentation generation
     generator:
       enabled: true
-      # spec_files: ["./openapi.yaml"]  # optional: load external OAS2/OAS3 files (e.g. from protoc-gen-openapi)
       scan_dirs:
-        - "./"
+        - "./app"
       output_path: "./docs/openapi.yaml"
-      watch_enabled: true
-    
-    # UI service (port for Swagger UI page; API requests go to lynx-http)
+      watch_files: true
+      file_watcher:
+        enabled: true
+        interval: 1s
+        debounce_delay: 500ms
+        max_retries: 3
+        retry_delay: 1s
+        batch_size: 10
+        health_check: true
     ui:
       enabled: true
-      port: 8080
+      port: 8081
       path: "/swagger"
-      title: "API Documentation"
-    
-    # API server for Swagger UI "Try it out" (lynx-http address)
-    # If not set, reads from lynx.http.addr automatically
-    api_server:
-      host: "localhost:8080"   # lynx-http listen address
-      base_path: ""            # optional, e.g. "/api/v1"
-    
-    # API information
+      deepLinking: true
+      docExpansion: "list"
     info:
       title: "My API"
       version: "1.0.0"
-      description: "API interface documentation"
+      description: "Runtime API documentation"
+    api_server:
+      host: "localhost:8080"
+      base_path: ""
