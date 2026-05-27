@@ -20,7 +20,7 @@ import (
 
 const (
 	pluginName        = "swagger"
-	pluginVersion     = "v1.6.0-beta"
+	pluginVersion     = "v1.6.1"
 	pluginDescription = "Swagger API documentation generator and UI server"
 	confPrefix        = "lynx.swagger"
 
