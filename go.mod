@@ -7,7 +7,7 @@ toolchain go1.26.2
 require (
 	github.com/getkin/kin-openapi v0.135.0
 	github.com/go-kratos/kratos/v2 v2.9.1
-	github.com/go-lynx/lynx v1.6.0-beta
+	github.com/go-lynx/lynx v1.6.1
 	github.com/go-openapi/spec v0.21.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/protobuf v1.36.10
