@@ -128,8 +128,8 @@ type ParamInfo struct {
 	Format      string
 	Required    bool
 	Description string
-	Default     interface{}
-	Example     interface{}
+	Default     any
+	Example     any
 }
 
 // ResponseInfo response information
@@ -169,8 +169,8 @@ type PropertyInfo struct {
 	Type        string
 	Format      string
 	Description string
-	Example     interface{}
-	Enum        []interface{}
+	Example     any
+	Enum        []any
 	Minimum     *float64
 	Maximum     *float64
 	MinLength   *int64
@@ -948,7 +948,7 @@ func (p *AnnotationParser) getTagValue(tag, key string) string {
 }
 
 // parseValue safely parses value with validation
-func (p *AnnotationParser) parseValue(value, valueType string) interface{} {
+func (p *AnnotationParser) parseValue(value, valueType string) any {
 	// Input validation
 	if value == "" || len(value) > maxValueLength {
 		return value
@@ -1411,26 +1411,6 @@ func (p *AnnotationParser) safeHasPrefix(s, prefix string) bool {
 	return strings.HasPrefix(s, prefix)
 }
 
-// safeContains safely checks if string contains substring with length validation
-func (p *AnnotationParser) safeContains(s, substr string) bool {
-	if s == "" || len(s) > maxInputLength || len(substr) > maxValueLength {
-		return false
-	}
-
-	return strings.Contains(s, substr)
-}
-
-// checkMemoryUsage checks memory usage and triggers garbage collection if needed
-func (p *AnnotationParser) checkMemoryUsage() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Check if we need garbage collection
-	if len(p.models) > maxModelCacheSize || len(p.routes) > maxRouteCacheSize {
-		p.performGC()
-	}
-}
-
 // performGC performs garbage collection on caches
 func (p *AnnotationParser) performGC() {
 	// Clear old entries if caches are too large
@@ -1481,12 +1461,12 @@ func (p *AnnotationParser) performGC() {
 	p.lastGC = time.Now()
 }
 
-// GetMemoryStats returns memory usage statistics
-func (p *AnnotationParser) GetMemoryStats() map[string]interface{} {
+// GetMemoryStats returns memory usage statistics.
+func (p *AnnotationParser) GetMemoryStats() map[string]any {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"models_count": len(p.models),
 		"routes_count": len(p.routes),
 		"max_models":   maxModelCacheSize,

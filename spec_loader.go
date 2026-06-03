@@ -80,7 +80,7 @@ func loadSpecFile(path string) (*spec.Swagger, error) {
 	isYAML := ext == ".yaml" || ext == ".yml"
 
 	// Detect version from first bytes (swagger 2.0 has "swagger": "2.0", OAS3 has "openapi": "3.x")
-	var raw map[string]interface{}
+	var raw map[string]any
 	if isYAML {
 		if err := yaml.Unmarshal(data, &raw); err != nil {
 			return nil, fmt.Errorf("yaml unmarshal: %w", err)

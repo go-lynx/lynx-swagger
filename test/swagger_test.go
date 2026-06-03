@@ -99,12 +99,12 @@ func TestSwaggerGeneration(t *testing.T) {
 	assert.NotEmpty(t, data)
 
 	// Validate JSON structure
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal(data, &result)
 	assert.NoError(t, err)
 	assert.Equal(t, "2.0", result["swagger"])
 
-	info := result["info"].(map[string]interface{})
+	info := result["info"].(map[string]any)
 	assert.Equal(t, "Test API", info["title"])
 	assert.Equal(t, "1.0.0", info["version"])
 }

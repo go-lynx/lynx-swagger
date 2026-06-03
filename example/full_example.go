@@ -50,7 +50,7 @@ type Product struct {
 // @Description Paginated data response structure
 type PagedResponse struct {
 	// Data list
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 	// Total count
 	Total int `json:"total" example:"100"`
 	// Current page

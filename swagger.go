@@ -1,3 +1,8 @@
+// Package swagger provides a Swagger/OpenAPI documentation plugin for the go-lynx framework.
+// It loads external OpenAPI/Swagger spec files, optionally scans Go source annotations,
+// merges them into a unified Swagger 2.0 document, and serves a built-in Swagger UI on a
+// configurable HTTP port. Route registration and spec access are protected by a sync.RWMutex
+// so the plugin is safe for concurrent use.
 package swagger
 
 import (
@@ -177,8 +182,8 @@ type Parameter struct {
 // Response response information
 type Response struct {
 	Description string
-	Schema      interface{}
-	Examples    map[string]interface{}
+	Schema      any
+	Examples    map[string]any
 }
 
 // FileWatcherConfig configuration for file watching
@@ -870,12 +875,12 @@ func (w *FileWatcher) IsHealthy() bool {
 	return w.healthy
 }
 
-// GetStats returns file watcher statistics
-func (w *FileWatcher) GetStats() map[string]interface{} {
+// GetStats returns file watcher statistics.
+func (w *FileWatcher) GetStats() map[string]any {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"healthy":      w.healthy,
 		"change_count": w.changeCount,
 		"last_change":  w.lastChange,
@@ -901,7 +906,7 @@ func (p *PlugSwagger) saveSwaggerJSON() error {
 	var err error
 	if isYAML {
 		// Marshal to JSON then to map so we can output YAML (spec.Swagger has json tags)
-		var raw map[string]interface{}
+		var raw map[string]any
 		jsonBytes, err := json.Marshal(p.swagger)
 		if err != nil {
 			return fmt.Errorf("failed to marshal swagger: %w", err)

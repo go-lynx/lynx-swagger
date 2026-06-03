@@ -16,7 +16,7 @@ import (
 
 // MockRuntime mock runtime
 type MockRuntime struct {
-	config map[string]interface{}
+	config map[string]any
 }
 
 func (m *MockRuntime) GetConfig() config.Config {
@@ -43,11 +43,11 @@ func (m *MockRuntime) GetEventHistory(filter plugins.EventFilter) []plugins.Plug
 	return []plugins.PluginEvent{}
 }
 
-func (m *MockRuntime) GetResource(id string) (interface{}, error) {
+func (m *MockRuntime) GetResource(id string) (any, error) {
 	return nil, nil
 }
 
-func (m *MockRuntime) RegisterResource(id string, resource interface{}) error {
+func (m *MockRuntime) RegisterResource(id string, resource any) error {
 	return nil
 }
 
@@ -55,11 +55,11 @@ func (m *MockRuntime) GetPlugin(name string) plugins.Plugin {
 	return nil
 }
 
-func (m *MockRuntime) PublishEvent(event interface{}) error {
+func (m *MockRuntime) PublishEvent(event any) error {
 	return nil
 }
 
-func (m *MockRuntime) SubscribeEvent(eventType string, handler func(interface{})) error {
+func (m *MockRuntime) SubscribeEvent(eventType string, handler func(any)) error {
 	return nil
 }
 
@@ -149,7 +149,7 @@ func (m *MockRuntime) GetResourceStats() map[string]any {
 
 // MockConfig mock configuration
 type MockConfig struct {
-	data map[string]interface{}
+	data map[string]any
 }
 
 func (m *MockConfig) Value(key string) config.Value {
@@ -159,14 +159,14 @@ func (m *MockConfig) Value(key string) config.Value {
 func (m *MockConfig) Load() error                               { return nil }
 func (m *MockConfig) Watch(key string, o config.Observer) error { return nil }
 func (m *MockConfig) Close() error                              { return nil }
-func (m *MockConfig) Scan(dest interface{}) error               { return nil }
+func (m *MockConfig) Scan(dest any) error                       { return nil }
 
 // MockValue mock value
 type MockValue struct {
-	data interface{}
+	data any
 }
 
-func (m *MockValue) Scan(dest interface{}) error {
+func (m *MockValue) Scan(dest any) error {
 	// Simple configuration scanning implementation
 	return nil
 }
@@ -178,8 +178,8 @@ func (m *MockValue) String() (string, error)               { return "", nil }
 func (m *MockValue) Duration() (time.Duration, error)      { return 0, nil }
 func (m *MockValue) Slice() ([]config.Value, error)        { return nil, nil }
 func (m *MockValue) Map() (map[string]config.Value, error) { return nil, nil }
-func (m *MockValue) Load() any                             { return m.data }
-func (m *MockValue) Store(any)                             {}
+func (m *MockValue) Load() any  { return m.data }
+func (m *MockValue) Store(any) {}
 
 func TestSwaggerPluginIntegration(t *testing.T) {
 	// Create temporary directory
@@ -220,15 +220,15 @@ type User struct {
 
 	// Mock runtime configuration
 	runtime := &MockRuntime{
-		config: map[string]interface{}{
-			"lynx.swagger": map[string]interface{}{
+		config: map[string]any{
+			"lynx.swagger": map[string]any{
 				"enabled": true,
-				"generator": map[string]interface{}{
+				"generator": map[string]any{
 					"enabled":     true,
 					"scan_dirs":   []string{tempDir},
 					"output_path": filepath.Join(tempDir, "swagger.json"),
 				},
-				"ui": map[string]interface{}{
+				"ui": map[string]any{
 					"enabled": false, // Don't start UI during testing
 				},
 			},
@@ -263,12 +263,12 @@ func TestSwaggerAnnotationParsing(t *testing.T) {
 	testCases := []struct {
 		name     string
 		line     string
-		expected interface{}
+		expected any
 	}{
 		{
 			name: "Parse path parameter",
 			line: "@Param id path int true \"User ID\"",
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"name":     "id",
 				"in":       "path",
 				"type":     "integer",
@@ -278,7 +278,7 @@ func TestSwaggerAnnotationParsing(t *testing.T) {
 		{
 			name: "Parse query parameter",
 			line: "@Param page query int false \"Page number\" default(1)",
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"name":     "page",
 				"in":       "query",
 				"type":     "integer",
@@ -288,7 +288,7 @@ func TestSwaggerAnnotationParsing(t *testing.T) {
 		{
 			name: "Parse request body parameter",
 			line: "@Param user body UserRequest true \"User information\"",
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"name":     "user",
 				"in":       "body",
 				"required": true,
@@ -301,7 +301,7 @@ func TestSwaggerAnnotationParsing(t *testing.T) {
 			param := parser.ParseParam(tc.line)
 			assert.NotNil(t, param)
 
-			expected := tc.expected.(map[string]interface{})
+			expected := tc.expected.(map[string]any)
 			if name, ok := expected["name"]; ok {
 				assert.Equal(t, name, param.Name)
 			}

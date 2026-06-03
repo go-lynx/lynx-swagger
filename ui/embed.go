@@ -1,3 +1,5 @@
+// Package ui embeds the Swagger UI HTML template and exposes an HTTP handler
+// that renders the Swagger UI page for a given API specification URL.
 package ui
 
 import (
