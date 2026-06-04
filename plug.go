@@ -5,8 +5,8 @@ import (
 	"github.com/go-lynx/lynx/plugins"
 )
 
+// init registers the Swagger plugin with the global factory on import.
 func init() {
-	// Register Swagger plugin to global plugin registry
 	factory.GlobalTypedFactory().RegisterPlugin(
 		pluginName,
 		confPrefix,

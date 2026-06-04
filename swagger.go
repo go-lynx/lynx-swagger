@@ -45,7 +45,7 @@ const (
 	EnvProduction  = "production"
 )
 
-// SwaggerConfig plugin configuration
+// SwaggerConfig is the top-level configuration for the Swagger plugin.
 type SwaggerConfig struct {
 	Enabled   bool            `json:"enabled" yaml:"enabled"`
 	Info      InfoConfig      `json:"info" yaml:"info"`
@@ -61,7 +61,7 @@ type ApiServerConfig struct {
 	BasePath string `json:"base_path" yaml:"base_path"` // e.g. "/api/v1"
 }
 
-// SecurityConfig security configuration
+// SecurityConfig restricts which environments and callers may access the UI.
 type SecurityConfig struct {
 	Environment    string   `json:"environment" yaml:"environment"`
 	AllowedEnvs    []string `json:"allowed_environments" yaml:"allowed_environments"`
@@ -77,7 +77,7 @@ type SecurityConfig struct {
 	AuthPassword string `json:"auth_password" yaml:"auth_password"`
 }
 
-// InfoConfig API basic information
+// InfoConfig holds the top-level metadata fields exposed in the Swagger spec.
 type InfoConfig struct {
 	Title          string `json:"title" yaml:"title"`
 	Description    string `json:"description" yaml:"description"`
@@ -94,7 +94,7 @@ type InfoConfig struct {
 	} `json:"license" yaml:"license"`
 }
 
-// UIConfig UI configuration
+// UIConfig controls the embedded Swagger UI server.
 type UIConfig struct {
 	Path                     string `json:"path" yaml:"path"`
 	Enabled                  bool   `json:"enabled" yaml:"enabled"`
@@ -114,7 +114,7 @@ type UIConfig struct {
 	ExposeExternally bool `json:"expose_externally" yaml:"expose_externally"`
 }
 
-// GenConfig generator configuration
+// GenConfig controls spec generation: source scan directories, external spec files, and file watching.
 type GenConfig struct {
 	Enabled     bool              `json:"enabled" yaml:"enabled"`
 	ScanDirs    []string          `json:"scan_dirs" yaml:"scan_dirs"`
@@ -124,7 +124,7 @@ type GenConfig struct {
 	FileWatcher FileWatcherConfig `json:"file_watcher" yaml:"file_watcher"`
 }
 
-// PlugSwagger Swagger plugin
+// PlugSwagger is the Swagger UI and spec-serving plugin.
 type PlugSwagger struct {
 	*plugins.BasePlugin
 	config            *SwaggerConfig
@@ -139,33 +139,33 @@ type PlugSwagger struct {
 	apiServerBasePath string
 }
 
-// Generator Swagger documentation generator
+// Generator builds the unified Swagger spec from source annotations and external spec files.
 type Generator struct {
 	config *GenConfig
 	parser *Parser
 	mu     sync.Mutex
 }
 
-// Parser code parser
+// Parser scans Go source packages for route and struct annotations.
 type Parser struct {
 	packages map[string]*Package
 	routes   []*Route
 }
 
-// Package package information
+// Package holds the parsed structs from a single Go package.
 type Package struct {
 	Name    string
 	Structs map[string]*Struct
 }
 
-// Struct struct information
+// Struct holds the parsed fields and doc comment for a named struct.
 type Struct struct {
 	Name   string
 	Fields []Field
 	Doc    string
 }
 
-// Field field information
+// Field represents a single struct field with its JSON/YAML tag and doc comment.
 type Field struct {
 	Name     string
 	Type     string
@@ -174,7 +174,7 @@ type Field struct {
 	Doc      string
 }
 
-// Route route information
+// Route holds the metadata for a single parsed HTTP endpoint.
 type Route struct {
 	Method      string
 	Path        string
@@ -186,7 +186,7 @@ type Route struct {
 	Responses   map[string]Response
 }
 
-// Parameter parameter information
+// Parameter describes a single route input (path, query, body, etc.).
 type Parameter struct {
 	Name        string
 	In          string
@@ -196,14 +196,14 @@ type Parameter struct {
 	Example     string
 }
 
-// Response response information
+// Response describes a possible HTTP response for a route.
 type Response struct {
 	Description string
 	Schema      any
 	Examples    map[string]any
 }
 
-// FileWatcherConfig configuration for file watching
+// FileWatcherConfig controls the polling interval, debounce window, and retry behaviour.
 type FileWatcherConfig struct {
 	Enabled       bool          `json:"enabled" yaml:"enabled"`
 	Interval      time.Duration `json:"interval" yaml:"interval"`
@@ -214,7 +214,7 @@ type FileWatcherConfig struct {
 	HealthCheck   bool          `json:"health_check" yaml:"health_check"`
 }
 
-// FileWatcher enhanced file monitoring
+// FileWatcher polls the configured spec files and calls callback when changes are detected.
 type FileWatcher struct {
 	paths       []string
 	callback    func() error
@@ -239,7 +239,7 @@ func defaultFileWatcherConfig() FileWatcherConfig {
 	}
 }
 
-// NewSwaggerPlugin creates a Swagger plugin
+// NewSwaggerPlugin creates a Swagger plugin instance with sensible defaults.
 func NewSwaggerPlugin() *PlugSwagger {
 	return &PlugSwagger{
 		BasePlugin: plugins.NewBasePlugin(
@@ -267,7 +267,7 @@ func NewSwaggerPlugin() *PlugSwagger {
 	}
 }
 
-// InitializeResources initializes resources
+// InitializeResources loads the Swagger config from the runtime config tree.
 func (p *PlugSwagger) InitializeResources(rt plugins.Runtime) error {
 	if err := p.BasePlugin.InitializeResources(rt); err != nil {
 		return err
@@ -348,7 +348,7 @@ func (p *PlugSwagger) newBaseSwaggerSpec() *spec.Swagger {
 	return swaggerDoc
 }
 
-// StartupTasks startup tasks
+// StartupTasks generates the Swagger spec and starts the UI server.
 func (p *PlugSwagger) StartupTasks() error {
 	return p.startupWithContext(context.Background())
 }
@@ -479,7 +479,7 @@ func (p *PlugSwagger) rebuildSwaggerDocs() error {
 	return nil
 }
 
-// CleanupTasks cleanup tasks
+// CleanupTasks stops the file watcher and shuts down the UI HTTP server.
 func (p *PlugSwagger) CleanupTasks() error {
 	return p.cleanupWithContext(context.Background())
 }
