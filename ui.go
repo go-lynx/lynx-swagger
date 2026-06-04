@@ -2,84 +2,14 @@ package swagger
 
 import (
 	"fmt"
-	"net/http"
-
-	"github.com/go-lynx/lynx-swagger/ui"
-	"github.com/go-lynx/lynx/log"
 )
 
-// SwaggerUIServer Swagger UI server
-type SwaggerUIServer struct {
-	port    int
-	path    string
-	specURL string
-	title   string
-	server  *http.Server
-}
-
-// NewSwaggerUIServer creates a Swagger UI server
-func NewSwaggerUIServer(port int, path, specURL, title string) *SwaggerUIServer {
-	return &SwaggerUIServer{
-		port:    port,
-		path:    path,
-		specURL: specURL,
-		title:   title,
-	}
-}
-
-// Start starts the UI server
-func (s *SwaggerUIServer) Start() error {
-	mux := http.NewServeMux()
-
-	// Register Swagger UI route
-	mux.HandleFunc(s.path, s.serveSwaggerUI)
-
-	// Register Swagger JSON route
-	mux.HandleFunc(s.path+".json", s.serveSwaggerJSON)
-
-	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.port),
-		Handler: mux,
-	}
-
-	log.Infof("Starting Swagger UI server on http://localhost:%d%s", s.port, s.path)
-
-	go func() {
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Errorf("Swagger UI server error: %v", err)
-		}
-	}()
-
-	return nil
-}
-
-// Stop stops the UI server
-func (s *SwaggerUIServer) Stop() error {
-	if s.server != nil {
-		return s.server.Close()
-	}
-	return nil
-}
-
-// serveSwaggerUI serves Swagger UI page
-func (s *SwaggerUIServer) serveSwaggerUI(w http.ResponseWriter, r *http.Request) {
-	config := ui.SwaggerUIConfig{
-		Title:           s.title,
-		SpecURL:         s.specURL,
-		AutoRefresh:     false,
-		RefreshInterval: 5000,
-	}
-	handler := ui.Handler(config)
-	handler(w, r)
-}
-
-// serveSwaggerJSON serves Swagger JSON documentation
-func (s *SwaggerUIServer) serveSwaggerJSON(w http.ResponseWriter, r *http.Request) {
-	// This should return actual Swagger JSON
-	// Temporarily return an example
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"swagger":"2.0","info":{"title":"API","version":"1.0.0"}}`))
-}
+// NOTE: The previous SwaggerUIServer type (and its serveSwaggerJSON stub that
+// returned a hardcoded spec, plus a Stop() that used the abrupt server.Close())
+// was a dead, divergent serving path. The plugin serves the real merged spec
+// via PlugSwagger.startSwaggerUI / serveSwaggerJSON and shuts the server down
+// gracefully with Shutdown(ctx) in cleanupWithContext. The dead path has been
+// removed to avoid serving a fake spec and abruptly dropping connections.
 
 // GenerateSwaggerUIHTML generates Swagger UI HTML (kept for backward compatibility)
 // Deprecated: Use ui.Handler instead

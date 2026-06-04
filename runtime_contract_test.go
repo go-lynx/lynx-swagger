@@ -19,6 +19,10 @@ func TestSwaggerRuntimeContract_LocalLifecycle(t *testing.T) {
 			Title:   "Local Swagger",
 			Version: "v1.0.0",
 		},
+		// Explicit environment so the fail-closed disable-gate permits Swagger.
+		Security: SecurityConfig{
+			Environment: EnvDevelopment,
+		},
 		UI: UIConfig{
 			Path:    "/swagger",
 			Enabled: false,
