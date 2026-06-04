@@ -7,6 +7,7 @@ package swagger
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -67,6 +68,13 @@ type SecurityConfig struct {
 	DisableInProd  bool     `json:"disable_in_production" yaml:"disable_in_production"`
 	TrustedOrigins []string `json:"trusted_origins" yaml:"trusted_origins"`
 	RequireAuth    bool     `json:"require_auth" yaml:"require_auth"`
+	// AuthToken, when set, is the expected bearer token presented via the
+	// "Authorization: Bearer <token>" header when RequireAuth is true.
+	AuthToken string `json:"auth_token" yaml:"auth_token"`
+	// AuthUsername/AuthPassword, when set, enable HTTP Basic auth as an
+	// alternative to AuthToken when RequireAuth is true.
+	AuthUsername string `json:"auth_username" yaml:"auth_username"`
+	AuthPassword string `json:"auth_password" yaml:"auth_password"`
 }
 
 // InfoConfig API basic information
@@ -95,6 +103,15 @@ type UIConfig struct {
 	DocExpansion             string `json:"docExpansion" yaml:"docExpansion"`
 	DefaultModelsExpandDepth int    `json:"defaultModelsExpandDepth" yaml:"defaultModelsExpandDepth"`
 	Port                     int    `json:"port" yaml:"port"`
+	// BindAddress is the network interface the UI server listens on. When
+	// empty it defaults to 127.0.0.1 (loopback only). Set explicitly to
+	// "0.0.0.0" (or a specific external interface) to expose the UI beyond
+	// the local host. ExposeExternally must also be true for any non-loopback bind.
+	BindAddress string `json:"bind_address" yaml:"bind_address"`
+	// ExposeExternally must be explicitly set to true to allow binding to a
+	// non-loopback address. This is an opt-in guard against accidentally
+	// serving the API spec/UI on all interfaces.
+	ExposeExternally bool `json:"expose_externally" yaml:"expose_externally"`
 }
 
 // GenConfig generator configuration
@@ -357,6 +374,15 @@ func (p *PlugSwagger) startupWithContext(ctx context.Context) error {
 	}
 	p.publishRuntimeContract(false, false)
 
+	// Environment gate: when the current environment does not permit Swagger
+	// (production/staging, or undetected env via fail-closed), disable the
+	// plugin gracefully instead of crashing the whole application.
+	if !p.isEnvironmentAllowed() {
+		log.Warnf("Swagger plugin disabled: not allowed in environment %q (set ENV/GO_ENV/APP_ENV or security.environment to enable)", p.getCurrentEnvironment())
+		p.publishRuntimeContract(false, true)
+		return nil
+	}
+
 	// Validate configuration
 	if err := p.validateConfiguration(); err != nil {
 		p.publishRuntimeContract(false, false)
@@ -587,9 +613,15 @@ func (p *PlugSwagger) startSwaggerUI() error {
 		port = 8081 // Default port
 	}
 
+	// Resolve bind address. Default to loopback (127.0.0.1) so the API spec and
+	// UI are not exposed on all interfaces. Binding to an external interface
+	// requires explicit opt-in via ExposeExternally.
+	bindHost := p.resolveBindHost()
+	addr := net.JoinHostPort(bindHost, fmt.Sprintf("%d", port))
+
 	// Create HTTP server with security configuration
 	p.uiServer = &http.Server{
-		Addr:           fmt.Sprintf(":%d", port),
+		Addr:           addr,
 		Handler:        p.createSecureHandler(mux),
 		ReadTimeout:    readTimeout,
 		WriteTimeout:   writeTimeout,
@@ -611,6 +643,28 @@ func (p *PlugSwagger) startSwaggerUI() error {
 	}()
 
 	return nil
+}
+
+// resolveBindHost determines the host the UI server should bind to. It defaults
+// to loopback (127.0.0.1). A non-loopback bind address is only honored when
+// ExposeExternally is explicitly enabled; otherwise the request is downgraded to
+// loopback with a warning so the spec/UI is never accidentally served on all
+// interfaces.
+func (p *PlugSwagger) resolveBindHost() string {
+	const loopback = "127.0.0.1"
+
+	bind := strings.TrimSpace(p.config.UI.BindAddress)
+	if bind == "" || bind == loopback || bind == "localhost" || bind == "::1" {
+		return loopback
+	}
+
+	if !p.config.UI.ExposeExternally {
+		log.Warnf("Swagger: ui.bind_address %q ignored because ui.expose_externally is false; binding to %s", bind, loopback)
+		return loopback
+	}
+
+	log.Warnf("Swagger: binding UI server to external address %q (expose_externally=true)", bind)
+	return bind
 }
 
 // createSecureHandler creates a secure HTTP handler with security headers
@@ -639,6 +693,21 @@ func (p *PlugSwagger) createSecureHandler(handler http.Handler) http.Handler {
 			return
 		}
 
+		// Re-check the production/environment disable-gate on every request.
+		// validateConfiguration only runs once at startup; environment can
+		// change (or be detected differently) at runtime, so fail closed here.
+		if !p.isEnvironmentAllowed() {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+
+		// Enforce authentication when RequireAuth is enabled.
+		if p.config.Security.RequireAuth && !p.isAuthorized(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Swagger"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		// Check request size
 		if r.ContentLength > maxRequestSize {
 			http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
@@ -648,6 +717,42 @@ func (p *PlugSwagger) createSecureHandler(handler http.Handler) http.Handler {
 		// Call the actual handler
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// isAuthorized validates request credentials when RequireAuth is enabled.
+// It accepts either a bearer token matching Security.AuthToken or HTTP Basic
+// credentials matching Security.AuthUsername/AuthPassword. Comparisons use a
+// constant-time check to avoid timing side channels. If RequireAuth is enabled
+// but no credential is configured, access is denied (fail closed).
+func (p *PlugSwagger) isAuthorized(r *http.Request) bool {
+	sec := p.config.Security
+
+	// Bearer token auth.
+	if sec.AuthToken != "" {
+		const prefix = "Bearer "
+		authz := r.Header.Get("Authorization")
+		if strings.HasPrefix(authz, prefix) {
+			token := strings.TrimSpace(authz[len(prefix):])
+			if subtle.ConstantTimeCompare([]byte(token), []byte(sec.AuthToken)) == 1 {
+				return true
+			}
+		}
+	}
+
+	// HTTP Basic auth.
+	if sec.AuthUsername != "" || sec.AuthPassword != "" {
+		user, pass, ok := r.BasicAuth()
+		if ok {
+			userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(sec.AuthUsername)) == 1
+			passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(sec.AuthPassword)) == 1
+			if userMatch && passMatch {
+				return true
+			}
+		}
+	}
+
+	// RequireAuth is on but no valid credential was presented (or none configured).
+	return false
 }
 
 // isCORSAllowed checks if the origin is allowed for CORS
@@ -1014,8 +1119,16 @@ func (p *PlugSwagger) CheckHealth() error {
 	return nil
 }
 
-// isEnvironmentAllowed checks if the current environment allows Swagger to run
+// isEnvironmentAllowed checks if the current environment allows Swagger to run.
+// It fails closed: when the environment cannot be determined (no env var and no
+// explicit config), it is treated as production-restricted and denied.
 func (p *PlugSwagger) isEnvironmentAllowed() bool {
+	// Fail closed on undetected environment: treat unknown/empty as
+	// production-restricted rather than silently allowing the spec/UI.
+	if !p.environmentExplicitlySet() {
+		return false
+	}
+
 	// Check if explicitly disabled in production
 	if p.config.Security.DisableInProd && p.isProductionEnvironment() {
 		return false
@@ -1036,8 +1149,21 @@ func (p *PlugSwagger) isEnvironmentAllowed() bool {
 	return !p.isProductionEnvironment()
 }
 
-// isProductionEnvironment checks if current environment is production
+// environmentExplicitlySet reports whether the runtime environment was
+// explicitly provided via env var or config. When false, the gate fails closed.
+func (p *PlugSwagger) environmentExplicitlySet() bool {
+	if os.Getenv("ENV") != "" || os.Getenv("GO_ENV") != "" || os.Getenv("APP_ENV") != "" {
+		return true
+	}
+	return strings.TrimSpace(p.config.Security.Environment) != ""
+}
+
+// isProductionEnvironment checks if current environment is production.
+// An undetected environment is treated as production-restricted (fail closed).
 func (p *PlugSwagger) isProductionEnvironment() bool {
+	if !p.environmentExplicitlySet() {
+		return true
+	}
 	env := p.getCurrentEnvironment()
 	return env == EnvProduction || env == EnvStaging
 }
@@ -1121,12 +1247,37 @@ func (p *PlugSwagger) validateSpecFile(path string) error {
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		return fmt.Errorf("file does not exist: %s", absPath)
 	}
+	if err := p.ensureWithinCwd(absPath); err != nil {
+		return fmt.Errorf("spec file %w", err)
+	}
+	return nil
+}
+
+// ensureWithinCwd verifies that absPath is contained within the current working
+// directory using a proper path-boundary check (filepath.Rel), not a string
+// prefix. Symlinks in both the target and the cwd are resolved first so that a
+// symlinked path cannot escape the boundary.
+func (p *PlugSwagger) ensureWithinCwd(absPath string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current working directory: %w", err)
 	}
-	if !strings.HasPrefix(absPath, cwd) {
-		return fmt.Errorf("spec file must be within current working directory %s", cwd)
+
+	// Resolve symlinks so the boundary check operates on real paths.
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolved
+	}
+	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolvedCwd
+	}
+
+	rel, err := filepath.Rel(cwd, absPath)
+	if err != nil {
+		return fmt.Errorf("must be within current working directory %s: %w", cwd, err)
+	}
+	// rel == ".." or starts with ".." + separator means the path escapes cwd.
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("must be within current working directory %s", cwd)
 	}
 	return nil
 }
@@ -1199,14 +1350,10 @@ func (p *PlugSwagger) validateScanDirectory(dir string) error {
 		}
 	}
 
-	// Check if it's a subdirectory of current working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current working directory: %w", err)
-	}
-
-	if !strings.HasPrefix(absPath, cwd) {
-		return fmt.Errorf("scan directory %s must be within current working directory %s", absPath, cwd)
+	// Check if it's a subdirectory of current working directory using a proper
+	// path-boundary check (with symlink resolution), not a string prefix.
+	if err := p.ensureWithinCwd(absPath); err != nil {
+		return fmt.Errorf("scan directory %s %w", absPath, err)
 	}
 
 	return nil
@@ -1234,10 +1381,11 @@ func (p *PlugSwagger) validateUIConfig() error {
 
 // SetDefaultValues sets default values for configuration
 func (p *PlugSwagger) SetDefaultValues() {
-	// Set default security configuration
-	if p.config.Security.Environment == "" {
-		p.config.Security.Environment = EnvDevelopment
-	}
+	// NOTE: The environment is intentionally NOT defaulted to development here.
+	// The disable-gate fails closed when the environment is undetected (no env
+	// var and no explicit config), so silently defaulting to development would
+	// re-open that gate. Operators must set ENV/GO_ENV/APP_ENV or
+	// security.environment explicitly to enable Swagger in non-production envs.
 
 	// Set default allowed environments (development and testing only)
 	if len(p.config.Security.AllowedEnvs) == 0 {
