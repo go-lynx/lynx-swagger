@@ -178,8 +178,8 @@ func (m *MockValue) String() (string, error)               { return "", nil }
 func (m *MockValue) Duration() (time.Duration, error)      { return 0, nil }
 func (m *MockValue) Slice() ([]config.Value, error)        { return nil, nil }
 func (m *MockValue) Map() (map[string]config.Value, error) { return nil, nil }
-func (m *MockValue) Load() any  { return m.data }
-func (m *MockValue) Store(any) {}
+func (m *MockValue) Load() any                             { return m.data }
+func (m *MockValue) Store(any)                             {}
 
 func TestSwaggerPluginIntegration(t *testing.T) {
 	// Create temporary directory
